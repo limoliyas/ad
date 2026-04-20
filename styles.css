@@ -1,0 +1,280 @@
+:root {
+  --bg: #0e1116;
+  --panel: #171b22;
+  --panel-soft: #1d2430;
+  --line: #2b3340;
+  --text: #f3f6fc;
+  --muted: #a8b3c7;
+  --accent: #4ad6a6;
+  --accent-2: #5bb8ff;
+  --danger: #ff6f6f;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans SC", "Manrope", sans-serif;
+  color: var(--text);
+  min-height: 100vh;
+  background: radial-gradient(circle at 15% 20%, #153142 0, transparent 30%),
+    radial-gradient(circle at 85% 10%, #2a1e4d 0, transparent 28%),
+    linear-gradient(140deg, #0a0d13 0%, #0f141c 60%, #101722 100%);
+}
+
+.bg-orb {
+  position: fixed;
+  border-radius: 999px;
+  filter: blur(50px);
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+.orb-1 {
+  width: 260px;
+  height: 260px;
+  background: #2ce7b0;
+  top: -60px;
+  left: -40px;
+}
+
+.orb-2 {
+  width: 300px;
+  height: 300px;
+  background: #347dff;
+  bottom: -90px;
+  right: -80px;
+}
+
+.app-shell {
+  width: min(1080px, calc(100% - 2rem));
+  margin: 2rem auto;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero {
+  padding: 1rem 0 0.5rem;
+}
+
+.kicker {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.hero h1 {
+  margin: 0.3rem 0;
+  font-size: clamp(2rem, 4.8vw, 3.2rem);
+  line-height: 1.05;
+}
+
+.hero-desc {
+  margin: 0;
+  max-width: 760px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.input-panel {
+  padding: 1rem;
+}
+
+.toolbar,
+.sub-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.sub-toolbar {
+  margin-top: 0.8rem;
+}
+
+label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+select,
+input,
+button,
+textarea {
+  font: inherit;
+}
+
+select,
+input,
+button {
+  border: 1px solid #3a4557;
+  border-radius: 10px;
+  padding: 0.48rem 0.7rem;
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.text-label {
+  display: inline-block;
+  margin-top: 0.8rem;
+  margin-bottom: 0.4rem;
+}
+
+.tokenizer-status {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+textarea {
+  width: 100%;
+  min-height: 230px;
+  resize: vertical;
+  border: 1px solid #384153;
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: #111620;
+  color: var(--text);
+  line-height: 1.65;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.stat-card {
+  padding: 1rem;
+}
+
+.stat-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stat-card h2 {
+  margin: 0.4rem 0 0;
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+
+.cost-panel {
+  padding: 1rem;
+}
+
+.cost-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.cost-head h3,
+.notes h3 {
+  margin: 0;
+}
+
+.cost-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.cost-grid {
+  margin-top: 0.8rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.cost-grid div {
+  border: 1px solid #2f3745;
+  background: #141a25;
+  border-radius: 12px;
+  padding: 0.8rem;
+}
+
+.cost-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cost-grid strong {
+  font-size: 1.25rem;
+  margin-top: 0.25rem;
+  display: block;
+}
+
+.usage-bar {
+  margin-top: 0.85rem;
+  height: 10px;
+  border-radius: 999px;
+  background: #222a37;
+  overflow: hidden;
+}
+
+#usageFill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+  transition: width 0.25s ease;
+}
+
+.notes {
+  padding: 1rem;
+}
+
+.notes ul {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+@media (max-width: 900px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    width: calc(100% - 1rem);
+    margin: 1rem auto;
+  }
+
+  .stats-grid,
+  .cost-grid {
+    grid-template-columns: 1fr;
+  }
+
+  textarea {
+    min-height: 180px;
+  }
+}
