@@ -9,6 +9,7 @@
       name="description"
       content="Token calculator for estimating token usage, context occupancy, and approximate API cost in real time."
     />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -23,7 +24,10 @@
 
     <main class="app-shell">
       <header class="hero">
-        <p id="kickerText" class="kicker">Prompt Cost Lab</p>
+        <div class="hero-brand">
+          <img src="./favicon.svg" alt="Token Calculator Icon" class="hero-logo" />
+          <p id="kickerText" class="kicker">Prompt Cost Lab</p>
+        </div>
         <h1 id="pageTitle">Token Calculator</h1>
         <p id="heroDesc" class="hero-desc">
           Paste your text to estimate tokens, context usage, and approximate API cost in real time.
@@ -39,7 +43,12 @@
           </select>
 
           <label id="modelLabel" for="modelSelect">Model</label>
-          <select id="modelSelect"></select>
+          <select id="modelSelect">
+            <option value="gpt-5.4">GPT-5.4</option>
+            <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+            <option value="gpt-5.2">GPT-5.2</option>
+            <option value="gpt-4o">GPT-4o</option>
+          </select>
 
           <label id="contextLabel" for="contextSize">Context Window</label>
           <select id="contextSize">

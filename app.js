@@ -36,6 +36,8 @@ const I18N = {
     heroDesc:
       "Paste your text to estimate tokens, context usage, and approximate API cost in real time.",
     languageLabel: "Language",
+    languageOptionEn: "English",
+    languageOptionZh: "Chinese",
     modelLabel: "Model",
     contextLabel: "Context Window",
     useDemo: "Use Demo",
@@ -58,6 +60,9 @@ const I18N = {
     note1: "This is a front-end estimator for budgeting reference, not official billing precision.",
     note2: "Mixed-language prompts are estimated with heuristics and may differ from real tokenizer output.",
     note3: "You can ask for file batch analysis, history tracking, and configurable model pricing.",
+    tokenizerLoading: "Tokenizer: loading real tokenizer...",
+    tokenizerReady: (encodingName) => `Tokenizer: precise mode active (${encodingName}).`,
+    tokenizerFallback: "Tokenizer: heuristic fallback mode (CDN unavailable or blocked).",
     pricingHint: (model) => `Input $${model.inputPer1M}/1M · Output $${model.outputPer1M}/1M`,
     demoText:
       "You are a senior analyst. Please summarize the following quarterly report and output:\n1) top 5 risks\n2) growth opportunities\n3) 90-day execution plan\n\nAlso provide both English and Chinese versions with a KPI comparison table."
@@ -70,6 +75,8 @@ const I18N = {
     pageTitle: "Token 计算器",
     heroDesc: "粘贴文本后，实时估算 Token、上下文占用和大致 API 成本。",
     languageLabel: "语言",
+    languageOptionEn: "英文",
+    languageOptionZh: "中文",
     modelLabel: "模型",
     contextLabel: "上下文窗口",
     useDemo: "填充示例",
@@ -92,10 +99,20 @@ const I18N = {
     note1: "这是前端估算器，结果仅用于预算参考，不等于官方精确计费。",
     note2: "中英文混合文本采用经验规则估算，和真实 tokenizer 结果可能有偏差。",
     note3: "你可以继续让我加：文件批量统计、历史记录、模型价格配置化。",
+    tokenizerLoading: "Tokenizer：正在加载真实分词器...",
+    tokenizerReady: (encodingName) => `Tokenizer：已启用精确模式（${encodingName}）。`,
+    tokenizerFallback: "Tokenizer：已回退到经验估算模式（CDN 不可用或被拦截）。",
     pricingHint: (model) => `输入 $${model.inputPer1M}/1M · 输出 $${model.outputPer1M}/1M`,
     demoText:
       "你是一名资深分析师。请总结以下季度报告，并输出：\n1）前 5 个风险\n2）增长机会\n3）90 天执行计划\n\n同时提供中英文双语版本，并使用表格展示 KPI 对比。"
   }
+};
+
+const MODEL_ENCODING_MAP = {
+  "gpt-5.4": "o200k_base",
+  "gpt-5.4-mini": "o200k_base",
+  "gpt-5.2": "o200k_base",
+  "gpt-4o": "o200k_base"
 };
 
 const modelSelect = document.getElementById("modelSelect");
@@ -107,6 +124,7 @@ const usdToCnyInput = document.getElementById("usdToCny");
 const pasteDemoBtn = document.getElementById("pasteDemoBtn");
 const clearBtn = document.getElementById("clearBtn");
 const languageSelect = document.getElementById("languageSelect");
+const tokenizerStatus = document.getElementById("tokenizerStatus");
 
 const charCount = document.getElementById("charCount");
 const wordCount = document.getElementById("wordCount");
@@ -121,13 +139,30 @@ const modelPriceHint = document.getElementById("modelPriceHint");
 const metaDescription = document.getElementById("metaDescription");
 
 let currentLang = "en";
+let getEncodingFn = null;
+let tokenizerState = "loading";
+const encoderCache = new Map();
 
 function initModelOptions() {
+  if (!modelSelect) {
+    return;
+  }
+
   modelSelect.innerHTML = MODEL_PRICING.map(
     (model) => `<option value="${model.id}">${model.name}</option>`
   ).join("");
 
   modelSelect.value = MODEL_PRICING[0].id;
+}
+
+function ensureModelOptions() {
+  if (!modelSelect) {
+    return;
+  }
+
+  if (modelSelect.options.length === 0) {
+    initModelOptions();
+  }
 }
 
 function getSelectedModel() {
@@ -146,7 +181,7 @@ function countCjkChars(text) {
   return matches ? matches.length : 0;
 }
 
-function estimateTokens(text) {
+function estimateTokensHeuristic(text) {
   if (!text.trim()) {
     return 0;
   }
@@ -163,6 +198,35 @@ function estimateTokens(text) {
   const overhead = 12;
 
   return Math.max(0, Math.round(cjkTokens + latinTokens + overhead));
+}
+
+function resolveEncodingByModel(modelId) {
+  return MODEL_ENCODING_MAP[modelId] || "cl100k_base";
+}
+
+function estimateTokens(text, modelId) {
+  if (!text.trim()) {
+    return 0;
+  }
+
+  if (getEncodingFn) {
+    try {
+      const encodingName = resolveEncodingByModel(modelId);
+      let encoder = encoderCache.get(encodingName);
+      if (!encoder) {
+        encoder = getEncodingFn(encodingName);
+        encoderCache.set(encodingName, encoder);
+      }
+
+      // 真实 tokenizer 结果叠加最小消息结构开销
+      return encoder.encode(text).length + 4;
+    } catch (error) {
+      tokenizerState = "fallback";
+      return estimateTokensHeuristic(text);
+    }
+  }
+
+  return estimateTokensHeuristic(text);
 }
 
 function toCurrency(valueUsd) {
@@ -184,6 +248,24 @@ function toCurrency(valueUsd) {
 
 function formatMoney(value, symbol) {
   return `${symbol}${value.toFixed(4)}`;
+}
+
+function updateTokenizerStatus() {
+  const locale = I18N[currentLang] || I18N.en;
+  const modelId = getSelectedModel().id;
+  const encodingName = resolveEncodingByModel(modelId);
+
+  if (tokenizerState === "loading") {
+    tokenizerStatus.textContent = locale.tokenizerLoading;
+    return;
+  }
+
+  if (tokenizerState === "ready") {
+    tokenizerStatus.textContent = locale.tokenizerReady(encodingName);
+    return;
+  }
+
+  tokenizerStatus.textContent = locale.tokenizerFallback;
 }
 
 function applyI18n(lang) {
@@ -229,18 +311,24 @@ function applyI18n(lang) {
   pasteDemoBtn.textContent = locale.useDemo;
   clearBtn.textContent = locale.clear;
   textInput.placeholder = locale.textPlaceholder;
+  languageSelect.options[0].textContent = locale.languageOptionEn;
+  languageSelect.options[1].textContent = locale.languageOptionZh;
+
+  updateTokenizerStatus();
 }
 
 function update() {
+  ensureModelOptions();
+
   const text = textInput.value || "";
   const words = countWords(text);
   const chars = text.length;
+  const selectedModel = getSelectedModel();
 
-  const inTokens = estimateTokens(text);
+  const inTokens = estimateTokens(text, selectedModel.id);
   const outTokens = Math.max(0, Number(outputTokensInput.value) || 0);
   const total = inTokens + outTokens;
 
-  const selectedModel = getSelectedModel();
   const inCostUsd = (inTokens / 1_000_000) * selectedModel.inputPer1M;
   const outCostUsd = (outTokens / 1_000_000) * selectedModel.outputPer1M;
   const totalCostUsd = inCostUsd + outCostUsd;
@@ -272,6 +360,7 @@ function update() {
 
   const locale = I18N[currentLang] || I18N.en;
   modelPriceHint.textContent = locale.pricingHint(selectedModel);
+  updateTokenizerStatus();
 }
 
 function bindEvents() {
@@ -306,8 +395,28 @@ function bindEvents() {
   });
 }
 
+async function initTokenizer() {
+  tokenizerState = "loading";
+  updateTokenizerStatus();
+
+  try {
+    const module = await import("https://esm.sh/js-tiktoken@1.0.21/lite");
+    if (typeof module.getEncoding === "function") {
+      getEncodingFn = module.getEncoding;
+      tokenizerState = "ready";
+    } else {
+      tokenizerState = "fallback";
+    }
+  } catch (error) {
+    tokenizerState = "fallback";
+  }
+
+  update();
+}
+
 initModelOptions();
 bindEvents();
 languageSelect.value = currentLang;
 applyI18n(currentLang);
 update();
+initTokenizer();

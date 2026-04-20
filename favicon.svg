@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Token Calculator Icon">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="6" x2="58" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34d7ad" />
+      <stop offset="1" stop-color="#3f7dff" />
+    </linearGradient>
+    <linearGradient id="core" x1="18" y1="18" x2="46" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#121926" />
+      <stop offset="1" stop-color="#0b111b" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#bg)" />
+  <circle cx="32" cy="32" r="18" fill="url(#core)" />
+  <path d="M20 26h24" stroke="#8fe9cf" stroke-width="2.5" stroke-linecap="round" />
+  <path d="M20 32h16" stroke="#7ec8ff" stroke-width="2.5" stroke-linecap="round" />
+  <path d="M20 38h10" stroke="#8fe9cf" stroke-width="2.5" stroke-linecap="round" />
+  <circle cx="40.5" cy="33.5" r="5.5" fill="none" stroke="#7ec8ff" stroke-width="2" />
+  <path d="M43.6 36.6l3.8 3.8" stroke="#7ec8ff" stroke-width="2" stroke-linecap="round" />
+</svg>
