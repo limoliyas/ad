@@ -1,153 +1,169 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Token Calculator | Prompt Cost Lab</title>
-    <meta
-      id="metaDescription"
-      name="description"
-      content="Token calculator for estimating token usage, context occupancy, and approximate API cost in real time."
-    />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans+SC:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <div class="bg-orb orb-1"></div>
-    <div class="bg-orb orb-2"></div>
 
-    <main class="app-shell">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token Calculator | Prompt Cost Lab</title>
+  <meta id="metaDescription" name="description"
+    content="Token calculator for estimating token usage, context occupancy, and approximate API cost in real time." />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans+SC:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+
+    <main id="top" class="app-shell">
+      <nav class="top-nav panel">
+        <div class="nav-brand">
+          <img src="./favicon.svg" alt="Site Icon" class="nav-logo" />
+          <span id="navBrandText">Prompt Cost Lab</span>
+        </div>
+        <div class="nav-links">
+          <a id="navArticles" href="#articles">Articles</a>
+        </div>
+      </nav>
+
       <header class="hero">
         <div class="hero-brand">
           <img src="./favicon.svg" alt="Token Calculator Icon" class="hero-logo" />
           <p id="kickerText" class="kicker">Prompt Cost Lab</p>
         </div>
-        <h1 id="pageTitle">Token Calculator</h1>
-        <p id="heroDesc" class="hero-desc">
-          Paste your text to estimate tokens, context usage, and approximate API cost in real time.
-        </p>
-      </header>
+      <h1 id="pageTitle">Token Calculator</h1>
+      <p id="heroDesc" class="hero-desc">
+        Paste your text to estimate tokens, context usage, and approximate API cost in real time.
+      </p>
+    </header>
 
-      <section class="panel input-panel">
-        <div class="toolbar">
-          <label id="languageLabel" for="languageSelect">Language</label>
-          <select id="languageSelect">
-            <option value="en" selected>English</option>
-            <option value="zh">中文</option>
-          </select>
+      <section id="calculator" class="panel input-panel">
+      <div class="toolbar">
+        <label id="languageLabel" for="languageSelect">Language</label>
+        <select id="languageSelect">
+          <option value="en" selected>English</option>
+          <option value="zh">中文</option>
+        </select>
 
-          <label id="modelLabel" for="modelSelect">Model</label>
-          <select id="modelSelect">
-            <option value="gpt-5.4">GPT-5.4</option>
-            <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
-            <option value="gpt-5.2">GPT-5.2</option>
-            <option value="gpt-4o">GPT-4o</option>
-          </select>
+        <label id="modelLabel" for="modelSelect">Model</label>
+        <select id="modelSelect">
+          <option value="gpt-5.4">GPT-5.4</option>
+          <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+          <option value="gpt-5.2">GPT-5.2</option>
+          <option value="gpt-4o">GPT-4o</option>
+        </select>
 
-          <label id="contextLabel" for="contextSize">Context Window</label>
-          <select id="contextSize">
-            <option value="4096">4K</option>
-            <option value="8192">8K</option>
-            <option value="32768" selected>32K</option>
-            <option value="128000">128K</option>
-            <option value="200000">200K</option>
-          </select>
+        <label id="contextLabel" for="contextSize">Context Window</label>
+        <select id="contextSize">
+          <option value="4096">4K</option>
+          <option value="8192">8K</option>
+          <option value="32768" selected>32K</option>
+          <option value="128000">128K</option>
+          <option value="200000">200K</option>
+        </select>
 
-          <button id="pasteDemoBtn" type="button">Use Demo</button>
-          <button id="clearBtn" type="button">Clear</button>
+        <button id="pasteDemoBtn" type="button">Use Demo</button>
+        <button id="clearBtn" type="button">Clear</button>
+      </div>
+      <p id="tokenizerStatus" class="tokenizer-status">Tokenizer: loading...</p>
+
+      <label id="textInputLabel" class="text-label" for="textInput">Input Text</label>
+      <textarea id="textInput"
+        placeholder="Paste your prompt, instructions, chat history, or document snippets here..."></textarea>
+
+      <div class="sub-toolbar">
+        <label id="outputTokensLabel" for="outputTokens">Estimated Output Tokens</label>
+        <input id="outputTokens" type="number" min="0" value="512" />
+
+        <label id="currencyLabel" for="currency">Currency</label>
+        <select id="currency">
+          <option value="USD" selected>USD</option>
+          <option value="CNY">CNY</option>
+        </select>
+
+        <label id="exchangeRateLabel" for="usdToCny">Exchange Rate (USD→CNY)</label>
+        <input id="usdToCny" type="number" step="0.01" min="0" value="7.20" />
+      </div>
+    </section>
+
+    <section class="stats-grid">
+      <article class="panel stat-card">
+        <p id="statCharsLabel">Characters</p>
+        <h2 id="charCount">0</h2>
+      </article>
+      <article class="panel stat-card">
+        <p id="statWordsLabel">Words</p>
+        <h2 id="wordCount">0</h2>
+      </article>
+      <article class="panel stat-card">
+        <p id="statInputTokensLabel">Estimated Input Tokens</p>
+        <h2 id="inputTokens">0</h2>
+      </article>
+      <article class="panel stat-card">
+        <p id="statTotalTokensLabel">Total Tokens (with Output)</p>
+        <h2 id="totalTokens">0</h2>
+      </article>
+    </section>
+
+    <section class="panel cost-panel">
+      <div class="cost-head">
+        <h3 id="costTitle">Cost Estimation</h3>
+        <p id="modelPriceHint">-</p>
+      </div>
+      <div class="cost-grid">
+        <div>
+          <span id="inputCostLabel">Input Cost</span>
+          <strong id="inputCost">$0.0000</strong>
         </div>
-        <p id="tokenizerStatus" class="tokenizer-status">Tokenizer: loading...</p>
-
-        <label id="textInputLabel" class="text-label" for="textInput">Input Text</label>
-        <textarea
-          id="textInput"
-          placeholder="Paste your prompt, instructions, chat history, or document snippets here..."
-        ></textarea>
-
-        <div class="sub-toolbar">
-          <label id="outputTokensLabel" for="outputTokens">Estimated Output Tokens</label>
-          <input id="outputTokens" type="number" min="0" value="512" />
-
-          <label id="currencyLabel" for="currency">Currency</label>
-          <select id="currency">
-            <option value="USD" selected>USD</option>
-            <option value="CNY">CNY</option>
-          </select>
-
-          <label id="exchangeRateLabel" for="usdToCny">Exchange Rate (USD→CNY)</label>
-          <input id="usdToCny" type="number" step="0.01" min="0" value="7.20" />
+        <div>
+          <span id="outputCostLabel">Output Cost</span>
+          <strong id="outputCost">$0.0000</strong>
         </div>
-      </section>
+        <div>
+          <span id="totalCostLabel">Total Cost</span>
+          <strong id="totalCost">$0.0000</strong>
+        </div>
+        <div>
+          <span id="contextUsageLabel">Context Usage</span>
+          <strong id="contextUsage">0%</strong>
+        </div>
+      </div>
+      <div class="usage-bar">
+        <div id="usageFill"></div>
+      </div>
+    </section>
 
-      <section class="stats-grid">
-        <article class="panel stat-card">
-          <p id="statCharsLabel">Characters</p>
-          <h2 id="charCount">0</h2>
-        </article>
-        <article class="panel stat-card">
-          <p id="statWordsLabel">Words</p>
-          <h2 id="wordCount">0</h2>
-        </article>
-        <article class="panel stat-card">
-          <p id="statInputTokensLabel">Estimated Input Tokens</p>
-          <h2 id="inputTokens">0</h2>
-        </article>
-        <article class="panel stat-card">
-          <p id="statTotalTokensLabel">Total Tokens (with Output)</p>
-          <h2 id="totalTokens">0</h2>
-        </article>
-      </section>
-
-      <section class="panel cost-panel">
-        <div class="cost-head">
-          <h3 id="costTitle">Cost Estimation</h3>
-          <p id="modelPriceHint">-</p>
+      <section id="articles" class="panel article-panel">
+        <div class="article-head">
+          <h3 id="articlesTitle">Featured Tech & Finance Reads</h3>
+          <p id="articlesDesc">Selected insights for operators, investors, and product teams.</p>
         </div>
-        <div class="cost-grid">
-          <div>
-            <span id="inputCostLabel">Input Cost</span>
-            <strong id="inputCost">$0.0000</strong>
-          </div>
-          <div>
-            <span id="outputCostLabel">Output Cost</span>
-            <strong id="outputCost">$0.0000</strong>
-          </div>
-          <div>
-            <span id="totalCostLabel">Total Cost</span>
-            <strong id="totalCost">$0.0000</strong>
-          </div>
-          <div>
-            <span id="contextUsageLabel">Context Usage</span>
-            <strong id="contextUsage">0%</strong>
-          </div>
-        </div>
-        <div class="usage-bar">
-          <div id="usageFill"></div>
-        </div>
+        <div id="articlesGrid" class="articles-grid"></div>
       </section>
 
       <section class="panel notes">
-        <h3 id="notesTitle">Notes</h3>
-        <ul>
-          <li id="note1">This is a front-end estimator for budgeting reference, not official billing precision.</li>
-          <li id="note2">Mixed-language prompts are estimated with heuristics and may differ from real tokenizer output.</li>
-          <li id="note3">You can ask for file batch analysis, history tracking, and configurable model pricing.</li>
-        </ul>
-      </section>
-    </main>
+      <h3 id="notesTitle">Notes</h3>
+      <ul>
+        <li id="note1">This is a front-end estimator for budgeting reference, not official billing precision.</li>
+        <li id="note2">Mixed-language prompts are estimated with heuristics and may differ from real tokenizer output.
+        </li>
+        <li id="note3">You can ask for file batch analysis, history tracking, and configurable model pricing.</li>
+      </ul>
+    </section>
+  </main>
 
-    <script type="module" src="./app.js"></script>
-    <script id="aclib" type="text/javascript" src="//acscdn.com/script/aclib.js"></script>
-    <script type="text/javascript">
-      aclib.runAutoTag({
-        zoneId: "x4o4dja7mn"
-      });
-    </script>
-  </body>
+  <script type="module" src="./app.js"></script>
+  <script id="aclib" type="text/javascript" src="//acscdn.com/script/aclib.js"></script>
+  <script type="text/javascript">
+    aclib.runAutoTag({
+      zoneId: "x4o4dja7mn"
+    });
+  </script>
+</body>
+
 </html>

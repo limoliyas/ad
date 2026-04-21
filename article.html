@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Article Detail | Prompt Cost Lab</title>
+  <meta name="description" content="Tech and finance article details." />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans+SC:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+
+  <main class="app-shell">
+    <nav class="top-nav panel">
+      <div class="nav-brand">
+        <img src="./favicon.svg" alt="Site Icon" class="nav-logo" />
+        <span>Prompt Cost Lab</span>
+      </div>
+      <div class="nav-links">
+        <a id="backListLink" href="./index.html#articles">Articles</a>
+      </div>
+    </nav>
+
+    <section class="panel article-detail-panel">
+      <div class="article-detail-head">
+        <button id="detailBackBtn" class="detail-back-btn" type="button">← Back to Articles</button>
+        <div class="sub-toolbar">
+          <label for="detailLang">Language</label>
+          <select id="detailLang">
+            <option value="en" selected>English</option>
+            <option value="zh">中文</option>
+          </select>
+        </div>
+      </div>
+
+      <p id="detailMeta" class="article-detail-meta"></p>
+      <h1 id="detailTitle" class="article-detail-title"></h1>
+      <div id="detailBody" class="article-detail-body"></div>
+
+      <div class="article-ad-wrap">
+        <div id="detailInPagePushAd"></div>
+        <div id="detailBannerAd"></div>
+      </div>
+    </section>
+  </main>
+
+  <script id="aclib" type="text/javascript" src="//acscdn.com/script/aclib.js"></script>
+  <script type="text/javascript">
+    aclib.runInPagePush({
+      zoneId: '11214738',
+      maxAds: 2,
+    });
+  </script>
+  <div>
+    <script type="text/javascript">
+      aclib.runBanner({
+        zoneId: '11214746',
+      });
+    </script>
+  </div>
+  <script src="./articles-data.js"></script>
+  <script src="./article.js"></script>
+</body>
+
+</html>
