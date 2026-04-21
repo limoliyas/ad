@@ -510,7 +510,6 @@ function applyI18n(lang) {
   metaDescription.setAttribute("content", locale.description);
 
   const textIds = [
-    "kickerText",
     "pageTitle",
     "heroDesc",
     "navBrandText",
