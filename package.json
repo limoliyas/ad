@@ -1,0 +1,9 @@
+{
+  "name": "ad-pages-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:pages": "node ./build-pages.mjs",
+    "deploy:pages": "npm run build:pages && npx wrangler pages deploy dist"
+  }
+}
