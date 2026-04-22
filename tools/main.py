@@ -203,6 +203,8 @@ class ConsoleProgressBoard:
             sys.stdout.write(line)
             if idx < self._line_count - 1:
                 sys.stdout.write("\n")
+        # 重绘后补一个换行，把光标稳定放到进度面板下方，避免下一次回退基准漂移。
+        sys.stdout.write("\n")
         sys.stdout.flush()
 
     def update(self, slot_index: int, current: int, status: str) -> None:
