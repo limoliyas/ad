@@ -15,7 +15,12 @@ window.ARTICLE_ITEMS = [
     bodyZh: [
       "AI Agent 正从创新试点进入生产流程，团队开始把它当作有 SLA 的流程组件，而非一次性演示工具。",
       "落地效果最好的路径通常是先缩小场景边界，再通过人工复核、规则护栏和性能监控逐步扩展。"
-    ]
+    ],
+    videoCard: {
+      href: "https://vids.st/v/23670",
+      titleEn: "Watch Related Video",
+      titleZh: "查看相关文章视频"
+    }
   },
   {
     category: "Finance",
@@ -33,7 +38,12 @@ window.ARTICLE_ITEMS = [
     bodyZh: [
       "资本效率已经变成董事会级别的经营纪律，融资叙事不再只看增长曲线，也看下行场景韧性。",
       "能把单元经济模型和真实融资环境打通的公司，在后期融资中明显更占优。"
-    ]
+    ],
+    videoCard: {
+      href: "https://vids.st/v/23671",
+      titleEn: "Watch Related Video",
+      titleZh: "查看相关文章视频"
+    }
   },
   {
     category: "Tech",
@@ -51,7 +61,12 @@ window.ARTICLE_ITEMS = [
     bodyZh: [
       "加速卡采购压力正在缓解，但机房上线仍常因并网审批和电力改造而延后。",
       "算力布局策略正在并入能源规划，运营方更倾向优先选择具备稳定扩电能力的区域。"
-    ]
+    ],
+    videoCard: {
+      href: "https://vids.st/v/23672",
+      titleEn: "Watch Related Video",
+      titleZh: "查看相关文章视频"
+    }
   },
   {
     category: "Finance",

@@ -406,6 +406,68 @@ textarea {
   margin: 0 0 0.8rem;
 }
 
+.article-video-section {
+  margin-top: 1.25rem;
+}
+
+.article-video-section h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1.15rem;
+}
+
+.article-video-card {
+  display: block;
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid #32608c;
+  border-radius: 16px;
+  padding: 1.1rem 1rem;
+  background: linear-gradient(135deg, rgba(91, 184, 255, 0.22) 0%, rgba(74, 214, 166, 0.16) 50%, rgba(33, 42, 58, 0.95) 100%);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.24);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.article-video-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 22px 36px rgba(0, 0, 0, 0.32);
+  border-color: #4ad6a6;
+}
+
+.article-video-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.73rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #d6eeff;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(214, 238, 255, 0.35);
+  border-radius: 999px;
+  padding: 0.22rem 0.52rem;
+}
+
+.article-video-card strong {
+  display: block;
+  margin-top: 0.72rem;
+  font-size: 1.15rem;
+  line-height: 1.45;
+}
+
+.article-video-url {
+  display: block;
+  margin-top: 0.48rem;
+  word-break: break-all;
+  color: #d8e9ff;
+  font-size: 0.9rem;
+}
+
+.article-video-action {
+  display: inline-block;
+  margin-top: 0.76rem;
+  font-size: 0.85rem;
+  color: #b7ffc9;
+}
+
 .article-ad-wrap {
   margin-top: 1rem;
   border-top: 1px solid #2f3847;
@@ -449,5 +511,13 @@ textarea {
 
   textarea {
     min-height: 180px;
+  }
+
+  .article-video-card {
+    padding: 0.95rem 0.9rem;
+  }
+
+  .article-video-card strong {
+    font-size: 1.05rem;
   }
 }
