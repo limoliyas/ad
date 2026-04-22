@@ -1,25 +1,34 @@
 from __future__ import annotations
 
+import random
+import time
+from typing import Any
+
 from tools.roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
 
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
 TARGET_URLS = [
-    "https://vids.st/v/23672",
-    "https://vids.st/v/23803",
-    "https://vids.st/v/23812"
+    "https://vids.st/v/23671",
 ]
 PROXY_RAWS = [
     "165.154.173.254:4733:G8g3TKqdi7fX:7G6nUjZB1w",
-    "165.154.173.254:5103:gGfVV1TbhVqN:8MP7QPbRF9bY"
 ]
-WINDOW_COUNT = 3
+# 窗口槽位数量：槽位少会自动多轮执行，直到所有 URL+代理 组合都跑完。
+WINDOW_COUNT = 1
 WORKSPACE_NAME = None
 PROJECT_NAME = None
 WINDOW_WIDTH = 400
 WINDOW_HEIGHT = 400
 SCREEN_WIDTH_OVERRIDE = None
 WINDOW_NAME_PREFIX = "Auto-Visit-"
+# 打开窗口后的随机等待区间（秒）。
+WAIT_AFTER_OPEN_RANGE = (3.0, 6.0)
+# 点击页面后的随机等待区间（秒）。
+WAIT_AFTER_CLICK_RANGE = (2.0, 4.0)
+# 点击时优先使用页面中心，避免点到无效区域。
+CLICK_RATIO_X = 0.5
+CLICK_RATIO_Y = 0.5
 
 
 # 解析 host:port:username:password 形式的代理字符串。
@@ -72,12 +81,14 @@ def build_visit_tasks(target_urls: list[str], proxy_raws: list[str]) -> list[dic
     for idx in range(min(len(target_urls), len(proxy_raws))):
         key = (idx, idx)
         used.add(key)
-        tasks.append({
-            "url_index": idx,
-            "proxy_index": idx,
-            "url": target_urls[idx],
-            "proxy_raw": proxy_raws[idx],
-        })
+        tasks.append(
+            {
+                "url_index": idx,
+                "proxy_index": idx,
+                "url": target_urls[idx],
+                "proxy_raw": proxy_raws[idx],
+            }
+        )
 
     # 第二阶段：补齐剩余组合，保证每个 URL+代理 组合最多只访问一次。
     for url_idx, url in enumerate(target_urls):
@@ -86,21 +97,23 @@ def build_visit_tasks(target_urls: list[str], proxy_raws: list[str]) -> list[dic
             if key in used:
                 continue
             used.add(key)
-            tasks.append({
-                "url_index": url_idx,
-                "proxy_index": proxy_idx,
-                "url": url,
-                "proxy_raw": proxy_raw,
-            })
+            tasks.append(
+                {
+                    "url_index": url_idx,
+                    "proxy_index": proxy_idx,
+                    "url": url,
+                    "proxy_raw": proxy_raw,
+                }
+            )
 
     return tasks
 
 
 # 自动从空间列表中解析 workspaceId 和 projectId。
 def resolve_workspace_project_id(
-        workspace_resp: dict,
-        workspace_name: str | None = None,
-        project_name: str | None = None,
+    workspace_resp: dict,
+    workspace_name: str | None = None,
+    project_name: str | None = None,
 ) -> tuple[int, int]:
     rows = workspace_resp.get("data", {}).get("rows", [])
     if not isinstance(rows, list) or not rows:
@@ -159,11 +172,13 @@ def get_screen_width(override_width: int | None = None) -> int:
 
 # 获取 workspace 中现有窗口列表。
 def list_existing_windows(client: RoxyClient, workspace_id: int) -> list[dict]:
-    resp = client.browser_list_v3({
-        "workspaceId": workspace_id,
-        "page_index": 1,
-        "page_size": 500,
-    })
+    resp = client.browser_list_v3(
+        {
+            "workspaceId": workspace_id,
+            "page_index": 1,
+            "page_size": 500,
+        }
+    )
     rows = resp.get("data", {}).get("rows", [])
     if isinstance(rows, list):
         return [row for row in rows if isinstance(row, dict)]
@@ -181,6 +196,66 @@ def build_window_name_map(rows: list[dict]) -> dict[str, str]:
     return name_map
 
 
+# 规范化 http 调试地址。
+def normalize_http_endpoint(http_value: Any) -> str | None:
+    if not isinstance(http_value, str) or not http_value.strip():
+        return None
+    http_value = http_value.strip()
+    if http_value.startswith("http://") or http_value.startswith("https://"):
+        return http_value
+    return f"http://{http_value}"
+
+
+# 在已打开页面中心执行一次点击。
+def click_page_once(http_endpoint: str, target_url: str) -> bool:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        print(f"click_skip: Playwright 不可用: {exc}")
+        return False
+
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(http_endpoint)
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+
+            # 优先定位目标 URL 页面，找不到则用当前页或新开页。
+            page = None
+            for p in context.pages:
+                if target_url in (p.url or ""):
+                    page = p
+                    break
+            if page is None and context.pages:
+                page = context.pages[0]
+            if page is None:
+                page = context.new_page()
+                page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+
+            page.bring_to_front()
+            viewport = page.viewport_size or {"width": WINDOW_WIDTH, "height": WINDOW_HEIGHT}
+            click_x = max(1, int(viewport["width"] * CLICK_RATIO_X))
+            click_y = max(1, int(viewport["height"] * CLICK_RATIO_Y))
+            page.mouse.click(click_x, click_y)
+
+            # 仅断开控制连接，不主动关闭真实浏览器窗口。
+            browser.close()
+            return True
+    except Exception as exc:
+        print(f"click_failed: {exc}")
+        return False
+
+
+# 在区间内随机等待。
+def sleep_random(wait_range: tuple[float, float], label: str) -> float:
+    start, end = wait_range
+    if start < 0 or end < 0 or end < start:
+        raise ValueError(f"等待区间配置错误: {wait_range}")
+    duration = random.uniform(start, end)
+    print(f"{label}: sleep {duration:.2f}s")
+    time.sleep(duration)
+    return duration
+
+
 client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
 
 try:
@@ -192,9 +267,6 @@ try:
         raise ValueError(
             f"窗口数量超过可分配组合上限：WINDOW_COUNT={WINDOW_COUNT}, 上限={max_windows}"
         )
-
-    # 本次需要处理的任务（每个 URL+代理 组合只会出现一次）。
-    selected_tasks = tasks[:WINDOW_COUNT]
 
     workspace_resp = client.browser_workspace({"page_index": 1, "page_size": 100})
     workspace_id, project_id = resolve_workspace_project_id(
@@ -210,39 +282,54 @@ try:
     existing_rows = list_existing_windows(client, workspace_id)
     window_name_map = build_window_name_map(existing_rows)
 
-    for slot_index, task in enumerate(selected_tasks):
+    # 按任务顺序执行；窗口槽位不足时复用窗口并执行多轮。
+    for task_idx, task in enumerate(tasks):
+        slot_index = task_idx % WINDOW_COUNT
+        round_index = task_idx // WINDOW_COUNT + 1
         window_name = f"{WINDOW_NAME_PREFIX}{slot_index + 1}"
         proxy_info = build_proxy_info(task["proxy_raw"])
         dir_id = window_name_map.get(window_name)
 
+        print(
+            f"task[{task_idx + 1}/{len(tasks)}] round={round_index} slot={slot_index + 1} "
+            f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}"
+        )
+
         if dir_id:
             # 窗口已存在：更新该窗口的代理和目标 URL。
-            mdf_resp = client.browser_mdf({
-                "workspaceId": workspace_id,
-                "projectId": project_id,
-                "dirId": dir_id,
-                "windowName": window_name,
-                "defaultOpenUrl": [task["url"]],
-                "proxyInfo": proxy_info,
-            })
+            mdf_resp = client.browser_mdf(
+                {
+                    "workspaceId": workspace_id,
+                    "projectId": project_id,
+                    "dirId": dir_id,
+                    "windowName": window_name,
+                    "defaultOpenUrl": [task["url"]],
+                    "proxyInfo": proxy_info,
+                }
+            )
             print(f"[{window_name}] mdf_resp:", mdf_resp)
         else:
             # 窗口不存在：创建新窗口。
-            create_resp = client.browser_create({
-                "workspaceId": workspace_id,
-                "projectId": project_id,
-                "windowName": window_name,
-                "defaultOpenUrl": [task["url"]],
-                "proxyInfo": proxy_info,
-            })
+            create_resp = client.browser_create(
+                {
+                    "workspaceId": workspace_id,
+                    "projectId": project_id,
+                    "windowName": window_name,
+                    "defaultOpenUrl": [task["url"]],
+                    "proxyInfo": proxy_info,
+                }
+            )
             dir_id = extract_dir_id(create_resp)
+            window_name_map[window_name] = dir_id
             print(f"[{window_name}] create_resp:", create_resp)
 
         # 每次打开前都先随机指纹。
-        random_env_resp = client.browser_random_env({
-            "workspaceId": workspace_id,
-            "dirId": dir_id,
-        })
+        random_env_resp = client.browser_random_env(
+            {
+                "workspaceId": workspace_id,
+                "dirId": dir_id,
+            }
+        )
         print(f"[{window_name}] random_env_resp:", random_env_resp)
 
         # 自动按屏幕宽度平铺窗口位置与大小。
@@ -257,11 +344,26 @@ try:
         print(f"[{window_name}] layout_resp:", layout_resp)
 
         # 打开窗口。
-        open_resp = client.browser_open({
-            "workspaceId": workspace_id,
-            "dirId": dir_id,
-        })
+        open_resp = client.browser_open(
+            {
+                "workspaceId": workspace_id,
+                "dirId": dir_id,
+            }
+        )
         print(f"[{window_name}] open_resp:", open_resp)
+
+        sleep_random(WAIT_AFTER_OPEN_RANGE, f"[{window_name}] wait_after_open")
+
+        open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
+        http_endpoint = normalize_http_endpoint(open_data.get("http") if isinstance(open_data, dict) else None)
+
+        if http_endpoint:
+            clicked = click_page_once(http_endpoint=http_endpoint, target_url=task["url"])
+            print(f"[{window_name}] clicked:", clicked)
+        else:
+            print(f"[{window_name}] clicked: False (缺少 http 调试地址)")
+
+        sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
 
 except (RoxyAPIError, RoxyClientError, ValueError) as e:
     print("调用失败:", e)
