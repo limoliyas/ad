@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import random
+import sys
 import time
 from typing import Any
 
-from tools.roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
+try:
+    from tools.roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
+except ModuleNotFoundError:
+    # 兼容在 tools 目录下直接执行：python main.py <token>
+    from roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
 
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
@@ -66,6 +71,13 @@ def build_open_args() -> list[str]:
     if HEADLESS_MODE:
         args.append("--headless=new")
     return args
+
+
+# 优先使用命令行传入 token，未传时回退到配置常量。
+def resolve_runtime_token(default_token: str) -> str:
+    if len(sys.argv) >= 2 and sys.argv[1].strip():
+        return sys.argv[1].strip()
+    return default_token
 
 
 # 解析 host:port:username:password 形式的代理字符串。
@@ -563,7 +575,10 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
     log_status("轮次结束", f"第 {cycle_no} 轮执行完成")
 
 
-client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
+runtime_token = resolve_runtime_token(TOKEN)
+token_source = "命令行参数" if runtime_token != TOKEN else "默认配置"
+log_status("启动配置", f"token 来源: {token_source}")
+client = RoxyClient(token=runtime_token, port=PORT, timeout=120)
 cycle_no = 1
 try:
     while True:
