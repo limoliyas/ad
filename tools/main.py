@@ -133,12 +133,10 @@ class ConsoleProgressBoard:
         self,
         window_names: list[str],
         total_by_slot: list[int],
-        global_round_by_slot: list[int],
         window_round_by_slot: list[int],
     ) -> None:
         self._window_names = window_names
         self._total_by_slot = total_by_slot
-        self._global_round_by_slot = global_round_by_slot
         self._window_round_by_slot = window_round_by_slot
         self._lock = threading.Lock()
         self._is_tty = sys.stdout.isatty()
@@ -164,14 +162,9 @@ class ConsoleProgressBoard:
             if 0 <= slot_index < len(self._window_round_by_slot)
             else 0
         )
-        global_round = (
-            self._global_round_by_slot[slot_index]
-            if 0 <= slot_index < len(self._global_round_by_slot)
-            else 0
-        )
         return (
             f"{slot_index + 1}. {window_name} "
-            f"[总轮{global_round}|窗轮{window_round}] "
+            f"[窗轮{window_round}] "
             f"{current_norm}/{total} {status}"
         )
 
@@ -248,7 +241,6 @@ class ConsoleProgressBoard:
         self,
         slot_index: int,
         total: int,
-        global_round: int,
         window_round: int,
         status: str = "待开始",
     ) -> None:
@@ -257,7 +249,6 @@ class ConsoleProgressBoard:
                 return
             safe_total = total if total > 0 else 1
             self._total_by_slot[slot_index] = safe_total
-            self._global_round_by_slot[slot_index] = global_round
             self._window_round_by_slot[slot_index] = window_round
             window_name = self._window_names[slot_index]
             self._lines[slot_index] = self._format_line(
@@ -811,14 +802,11 @@ def run_one_cycle(client: RoxyClient) -> None:
     progress_board = ConsoleProgressBoard(
         window_names=[str(slot["window_name"]) for slot in slots],
         total_by_slot=[1 for _ in range(effective_window_count)],
-        global_round_by_slot=[0 for _ in range(effective_window_count)],
         window_round_by_slot=[0 for _ in range(effective_window_count)],
     )
 
     # 独立窗口并发执行：每个槽位持续自循环，完成即进入下一轮，不等待其他窗口。
     shared_lock = threading.Lock()
-    round_lock = threading.Lock()
-    global_round_no = {"value": 0}
 
     # 针对共享状态（窗口ID池/映射）加锁，避免并发读写冲突。
     def acquire_reusable_dir_id() -> str | None:
@@ -832,11 +820,6 @@ def run_one_cycle(client: RoxyClient) -> None:
             slot_ref["dir_id"] = dir_id_ref
             window_name_map[window_name_ref] = dir_id_ref
 
-    def next_global_round_no() -> int:
-        with round_lock:
-            global_round_no["value"] += 1
-            return global_round_no["value"]
-
     def run_slot_tasks(slot_index: int) -> None:
         slot = slots[slot_index]
         window_name = slot["window_name"]
@@ -844,12 +827,10 @@ def run_one_cycle(client: RoxyClient) -> None:
         while True:
             round_start_at = time.monotonic()
             window_round += 1
-            global_round = next_global_round_no()
             tasks_for_slot = build_slot_visit_tasks(TARGET_URLS, PROXY_RAWS, slot_index)
             progress_board.begin_round(
                 slot_index=slot_index,
                 total=len(tasks_for_slot),
-                global_round=global_round,
                 window_round=window_round,
                 status="本轮开始",
             )
