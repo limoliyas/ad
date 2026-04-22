@@ -15,14 +15,17 @@ except ModuleNotFoundError:
 
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
-TARGET_URLS = [
-    "https://vids.st/v/23943",
-    "https://vids.st/v/23942",
-    "https://vids.st/v/23940",
-    "https://vids.st/v/23937",
-    "https://vids.st/v/23935",
-    "https://vids.st/v/23931",
-]
+# TARGET_URLS = [
+#     "https://vids.st/v/23946",
+#     "https://vids.st/v/23943",
+#     "https://vids.st/v/23942",
+#     "https://vids.st/v/23940",
+#     "https://vids.st/v/23937",
+#     "https://vids.st/v/23935",
+#     "https://vids.st/v/23931",
+# ]
+
+TARGET_URLS = ["https://calculator.ccwu.cc/article.html?id=0&lang=en","https://calculator.ccwu.cc/article.html?id=1&lang=en","https://calculator.ccwu.cc/article.html?id=2&lang=en","https://calculator.ccwu.cc/article.html?id=3&lang=en","https://calculator.ccwu.cc/article.html?id=4&lang=en","https://calculator.ccwu.cc/article.html?id=5&lang=en","https://calculator.ccwu.cc/article.html?id=6&lang=en","https://calculator.ccwu.cc/article.html?id=7&lang=en","https://calculator.ccwu.cc/article.html?id=8&lang=en","https://calculator.ccwu.cc/article.html?id=9&lang=en","https://calculator.ccwu.cc/article.html?id=10&lang=en","https://calculator.ccwu.cc/article.html?id=11&lang=en"]
 PROXY_RAWS = [
     "proxy.veproxy.com:10000:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
     "proxy.veproxy.com:10001:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
@@ -163,46 +166,47 @@ def extract_dir_id(resp: dict) -> str:
     raise ValueError(f"未找到 dirId: {resp}")
 
 
-# 生成 URL+代理 的唯一任务列表：先按同索引配对，再补齐剩余笛卡尔组合。
-def build_visit_tasks(target_urls: list[str], proxy_raws: list[str]) -> list[dict]:
+# 生成每个窗口要执行的任务列表：
+# - URL 数量 >= 4：每个窗口随机处理 3 或 4 个 URL
+# - URL 数量 < 4：每个窗口处理全部 URL
+def build_window_visit_tasks(
+    target_urls: list[str], proxy_raws: list[str], window_count: int
+) -> list[list[dict[str, Any]]]:
     if not target_urls:
         raise ValueError("TARGET_URLS 不能为空")
     if not proxy_raws:
         raise ValueError("PROXY_RAWS 不能为空")
+    if window_count <= 0:
+        raise ValueError("window_count 必须大于 0")
 
-    tasks: list[dict] = []
-    used: set[tuple[int, int]] = set()
+    url_total = len(target_urls)
+    slot_tasks: list[list[dict[str, Any]]] = []
+    all_url_indices = list(range(url_total))
 
-    # 第一阶段：优先满足你给的顺序语义，如 url1-proxy1, url2-proxy2。
-    for idx in range(min(len(target_urls), len(proxy_raws))):
-        key = (idx, idx)
-        used.add(key)
-        tasks.append(
-            {
-                "url_index": idx,
-                "proxy_index": idx,
-                "url": target_urls[idx],
-                "proxy_raw": proxy_raws[idx],
-            }
-        )
+    for slot_index in range(window_count):
+        if url_total >= 4:
+            selected_count = random.randint(3, 4)
+        else:
+            selected_count = url_total
+        selected_indices = random.sample(all_url_indices, k=selected_count)
+        random.shuffle(selected_indices)
 
-    # 第二阶段：补齐剩余组合，保证每个 URL+代理 组合最多只访问一次。
-    for url_idx, url in enumerate(target_urls):
-        for proxy_idx, proxy_raw in enumerate(proxy_raws):
-            key = (url_idx, proxy_idx)
-            if key in used:
-                continue
-            used.add(key)
-            tasks.append(
+        proxy_index = slot_index % len(proxy_raws)
+        proxy_raw = proxy_raws[proxy_index]
+        tasks_for_slot: list[dict[str, Any]] = []
+        for url_index in selected_indices:
+            tasks_for_slot.append(
                 {
-                    "url_index": url_idx,
-                    "proxy_index": proxy_idx,
-                    "url": url,
+                    "slot_index": slot_index,
+                    "url_index": url_index,
+                    "proxy_index": proxy_index,
+                    "url": target_urls[url_index],
                     "proxy_raw": proxy_raw,
                 }
             )
+        slot_tasks.append(tasks_for_slot)
 
-    return tasks
+    return slot_tasks
 
 
 # 自动从空间列表中解析 workspaceId 和 projectId。
@@ -488,19 +492,28 @@ def run_worker_action(action: str, http_endpoint: str, target_url: str) -> int:
 
 def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
     log_status("轮次开始", f"第 {cycle_no} 轮开始执行")
-    tasks = build_visit_tasks(TARGET_URLS, PROXY_RAWS)
-    max_windows = len(tasks)
+    max_windows = max(1, len(PROXY_RAWS))
     if WINDOW_COUNT <= 0:
         raise ValueError("WINDOW_COUNT 必须大于 0")
     if WINDOW_COUNT > max_windows:
         raise ValueError(
             f"窗口数量超过可分配组合上限：WINDOW_COUNT={WINDOW_COUNT}, 上限={max_windows}"
         )
-    effective_window_count = min(WINDOW_COUNT, len(tasks))
+    effective_window_count = min(WINDOW_COUNT, max_windows)
     if effective_window_count < WINDOW_COUNT:
         log_status(
             "窗口提示",
-            f"组合任务数仅 {len(tasks)}，本轮最多使用 {effective_window_count} 个窗口槽位",
+            f"代理槽位数仅 {max_windows}，本轮最多使用 {effective_window_count} 个窗口槽位",
+        )
+    slot_tasks = build_window_visit_tasks(TARGET_URLS, PROXY_RAWS, effective_window_count)
+    total_tasks = sum(len(tasks) for tasks in slot_tasks)
+    if total_tasks <= 0:
+        raise ValueError("本轮没有可执行任务，请检查 TARGET_URLS 配置")
+    max_rounds = max(len(tasks) for tasks in slot_tasks)
+    for slot_index, tasks_for_slot in enumerate(slot_tasks):
+        log_status(
+            "窗口任务",
+            f"slot={slot_index + 1} 本轮 URL 数={len(tasks_for_slot)}",
         )
 
     workspace_resp = client.browser_workspace({"page_index": 1, "page_size": 100})
@@ -536,16 +549,19 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
             slot["dir_id"] = reusable_existing_ids.pop(0)
             assigned_ids.add(slot["dir_id"])
 
-    # 按轮执行：每轮先把所有槽位窗口都打开，再做后续等待/点击/关闭。
-    for round_start in range(0, len(tasks), effective_window_count):
-        round_tasks = tasks[round_start : round_start + effective_window_count]
-        round_index = round_start // effective_window_count + 1
+    # 按轮执行：每轮各窗口最多执行一个任务，先全部开窗，再做后续等待/点击/关闭。
+    task_seq_no = 0
+    for round_no in range(max_rounds):
+        round_index = round_no + 1
         opened_windows: list[dict[str, Any]] = []
 
         # 第一阶段：准备并打开本轮所有窗口（实现“同时打开”的效果）。
-        for offset, task in enumerate(round_tasks):
-            task_idx = round_start + offset
-            slot_index = offset
+        for slot_index in range(effective_window_count):
+            tasks_for_slot = slot_tasks[slot_index]
+            if round_no >= len(tasks_for_slot):
+                continue
+            task = tasks_for_slot[round_no]
+            task_seq_no += 1
             slot = slots[slot_index]
             window_name = slot["window_name"]
             try:
@@ -554,7 +570,7 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
 
                 log_status(
                     "任务开始",
-                    f"task[{task_idx + 1}/{len(tasks)}] round={round_index} slot={slot_index + 1} "
+                    f"task[{task_seq_no}/{total_tasks}] round={round_index}/{max_rounds} slot={slot_index + 1} "
                     f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}",
                 )
 
