@@ -133,12 +133,12 @@ class ConsoleProgressBoard:
         self,
         window_names: list[str],
         total_by_slot: list[int],
-        cycle_no: int,
+        global_round_by_slot: list[int],
         window_round_by_slot: list[int],
     ) -> None:
         self._window_names = window_names
         self._total_by_slot = total_by_slot
-        self._cycle_no = cycle_no
+        self._global_round_by_slot = global_round_by_slot
         self._window_round_by_slot = window_round_by_slot
         self._lock = threading.Lock()
         self._is_tty = sys.stdout.isatty()
@@ -164,9 +164,14 @@ class ConsoleProgressBoard:
             if 0 <= slot_index < len(self._window_round_by_slot)
             else 0
         )
+        global_round = (
+            self._global_round_by_slot[slot_index]
+            if 0 <= slot_index < len(self._global_round_by_slot)
+            else 0
+        )
         return (
             f"{slot_index + 1}. {window_name} "
-            f"[总轮{self._cycle_no}|窗轮{window_round}] "
+            f"[总轮{global_round}|窗轮{window_round}] "
             f"{current_norm}/{total} {status}"
         )
 
@@ -235,6 +240,31 @@ class ConsoleProgressBoard:
                 window_name=window_name,
                 current=current,
                 total=total,
+                status=status,
+            )
+            self._render_locked()
+
+    def begin_round(
+        self,
+        slot_index: int,
+        total: int,
+        global_round: int,
+        window_round: int,
+        status: str = "待开始",
+    ) -> None:
+        with self._lock:
+            if slot_index < 0 or slot_index >= len(self._lines):
+                return
+            safe_total = total if total > 0 else 1
+            self._total_by_slot[slot_index] = safe_total
+            self._global_round_by_slot[slot_index] = global_round
+            self._window_round_by_slot[slot_index] = window_round
+            window_name = self._window_names[slot_index]
+            self._lines[slot_index] = self._format_line(
+                slot_index=slot_index,
+                window_name=window_name,
+                current=0,
+                total=safe_total,
                 status=status,
             )
             self._render_locked()
@@ -362,6 +392,43 @@ def build_window_visit_tasks(
         slot_tasks.append(tasks_for_slot)
 
     return slot_tasks
+
+
+def build_slot_visit_tasks(
+    target_urls: list[str],
+    proxy_raws: list[str],
+    slot_index: int,
+) -> list[dict[str, Any]]:
+    if not target_urls:
+        raise ValueError("TARGET_URLS 不能为空")
+    if not proxy_raws:
+        raise ValueError("PROXY_RAWS 不能为空")
+    if slot_index < 0:
+        raise ValueError("slot_index 不能小于 0")
+
+    url_total = len(target_urls)
+    all_url_indices = list(range(url_total))
+    if url_total >= 4:
+        selected_count = random.randint(3, 4)
+    else:
+        selected_count = url_total
+    selected_indices = random.sample(all_url_indices, k=selected_count)
+    random.shuffle(selected_indices)
+
+    proxy_index = slot_index % len(proxy_raws)
+    proxy_raw = proxy_raws[proxy_index]
+    tasks_for_slot: list[dict[str, Any]] = []
+    for url_index in selected_indices:
+        tasks_for_slot.append(
+            {
+                "slot_index": slot_index,
+                "url_index": url_index,
+                "proxy_index": proxy_index,
+                "url": target_urls[url_index],
+                "proxy_raw": proxy_raw,
+            }
+        )
+    return tasks_for_slot
 
 
 # 自动从空间列表中解析 workspaceId 和 projectId。
@@ -690,8 +757,8 @@ def run_worker_action(action: str, http_endpoint: str, target_url: str) -> int:
     return 2
 
 
-def run_one_cycle(client: RoxyClient, cycle_no: int, window_round_counter: dict[int, int]) -> None:
-    log_status("轮次开始", f"第 {cycle_no} 轮开始执行")
+def run_one_cycle(client: RoxyClient) -> None:
+    log_status("运行模式", "已启用窗口独立轮次模式：窗口完成后立即进入下一轮")
     max_windows = max(1, len(PROXY_RAWS))
     if WINDOW_COUNT <= 0:
         raise ValueError("WINDOW_COUNT 必须大于 0")
@@ -705,12 +772,8 @@ def run_one_cycle(client: RoxyClient, cycle_no: int, window_round_counter: dict[
             "窗口提示",
             f"代理槽位数仅 {max_windows}，本轮最多使用 {effective_window_count} 个窗口槽位",
         )
-    slot_tasks = build_window_visit_tasks(TARGET_URLS, PROXY_RAWS, effective_window_count)
-    total_tasks = sum(len(tasks) for tasks in slot_tasks)
-    if total_tasks <= 0:
-        raise ValueError("本轮没有可执行任务，请检查 TARGET_URLS 配置")
-    for slot_index, tasks_for_slot in enumerate(slot_tasks):
-        log_status("窗口任务", f"slot={slot_index + 1} 本轮 URL 数={len(tasks_for_slot)}")
+    if not TARGET_URLS:
+        raise ValueError("TARGET_URLS 不能为空")
 
     workspace_resp = client.browser_workspace({"page_index": 1, "page_size": 100})
     workspace_id, project_id = resolve_workspace_project_id(
@@ -745,21 +808,17 @@ def run_one_cycle(client: RoxyClient, cycle_no: int, window_round_counter: dict[
             slot["dir_id"] = reusable_existing_ids.pop(0)
             assigned_ids.add(slot["dir_id"])
 
-    window_round_by_slot: list[int] = []
-    for slot_index in range(effective_window_count):
-        next_round = window_round_counter.get(slot_index, 0) + 1
-        window_round_counter[slot_index] = next_round
-        window_round_by_slot.append(next_round)
-
     progress_board = ConsoleProgressBoard(
         window_names=[str(slot["window_name"]) for slot in slots],
-        total_by_slot=[len(tasks) for tasks in slot_tasks],
-        cycle_no=cycle_no,
-        window_round_by_slot=window_round_by_slot,
+        total_by_slot=[1 for _ in range(effective_window_count)],
+        global_round_by_slot=[0 for _ in range(effective_window_count)],
+        window_round_by_slot=[0 for _ in range(effective_window_count)],
     )
 
-    # 独立窗口并发执行：每个槽位按照自己的任务队列串行处理，不再按“轮次”互相等待。
+    # 独立窗口并发执行：每个槽位持续自循环，完成即进入下一轮，不等待其他窗口。
     shared_lock = threading.Lock()
+    round_lock = threading.Lock()
+    global_round_no = {"value": 0}
 
     # 针对共享状态（窗口ID池/映射）加锁，避免并发读写冲突。
     def acquire_reusable_dir_id() -> str | None:
@@ -773,153 +832,176 @@ def run_one_cycle(client: RoxyClient, cycle_no: int, window_round_counter: dict[
             slot_ref["dir_id"] = dir_id_ref
             window_name_map[window_name_ref] = dir_id_ref
 
+    def next_global_round_no() -> int:
+        with round_lock:
+            global_round_no["value"] += 1
+            return global_round_no["value"]
+
     def run_slot_tasks(slot_index: int) -> None:
         slot = slots[slot_index]
         window_name = slot["window_name"]
-        tasks_for_slot = slot_tasks[slot_index]
-        opened_this_round = False
-        last_http_endpoint: str | None = None
-        for task_order, task in enumerate(tasks_for_slot):
-            dir_id: str | None = slot.get("dir_id")
-            try:
-                proxy_info = build_proxy_info(task["proxy_raw"])
-                progress_board.update(slot_index, task_order + 1, "准备中")
+        window_round = 0
+        while True:
+            round_start_at = time.monotonic()
+            window_round += 1
+            global_round = next_global_round_no()
+            tasks_for_slot = build_slot_visit_tasks(TARGET_URLS, PROXY_RAWS, slot_index)
+            progress_board.begin_round(
+                slot_index=slot_index,
+                total=len(tasks_for_slot),
+                global_round=global_round,
+                window_round=window_round,
+                status="本轮开始",
+            )
 
-                if not opened_this_round:
-                    if dir_id:
-                        # 仅在本轮首次任务更新窗口配置，后续 URL 走同窗导航。
-                        client.browser_mdf(
-                            {
-                                "workspaceId": workspace_id,
-                                "projectId": project_id,
-                                "dirId": dir_id,
-                                "windowName": window_name,
-                                "defaultOpenUrl": [task["url"]],
-                                "proxyInfo": proxy_info,
-                                "fingerInfo": build_finger_info_base(),
-                            }
-                        )
-                        progress_board.update(slot_index, task_order + 1, "更新窗口配置")
-                    else:
-                        # 槽位无可用窗口时尝试创建；若额度不足则降级复用剩余已有窗口。
-                        if USE_EXISTING_WINDOWS_ONLY:
-                            raise ValueError(f"[{window_name}] 未找到可复用窗口，且已禁用创建新窗口")
-                        try:
-                            create_resp = client.browser_create(
+            opened_this_round = False
+            last_http_endpoint: str | None = None
+            for task_order, task in enumerate(tasks_for_slot):
+                dir_id: str | None = slot.get("dir_id")
+                try:
+                    proxy_info = build_proxy_info(task["proxy_raw"])
+                    progress_board.update(slot_index, task_order + 1, "准备中")
+
+                    if not opened_this_round:
+                        if dir_id:
+                            # 仅在本轮首次任务更新窗口配置，后续 URL 走同窗导航。
+                            client.browser_mdf(
                                 {
                                     "workspaceId": workspace_id,
                                     "projectId": project_id,
+                                    "dirId": dir_id,
                                     "windowName": window_name,
                                     "defaultOpenUrl": [task["url"]],
                                     "proxyInfo": proxy_info,
                                     "fingerInfo": build_finger_info_base(),
                                 }
                             )
-                            dir_id = extract_dir_id(create_resp)
-                            update_slot_dir_id(slot, window_name, dir_id)
-                            progress_board.update(slot_index, task_order + 1, "创建窗口成功")
-                        except RoxyAPIError as exc:
-                            if exc.code != 409:
-                                raise
-                            reusable_dir_id = acquire_reusable_dir_id()
-                            if reusable_dir_id:
-                                dir_id = reusable_dir_id
+                            progress_board.update(slot_index, task_order + 1, "更新窗口配置")
+                        else:
+                            # 槽位无可用窗口时尝试创建；若额度不足则降级复用剩余已有窗口。
+                            if USE_EXISTING_WINDOWS_ONLY:
+                                raise ValueError(f"[{window_name}] 未找到可复用窗口，且已禁用创建新窗口")
+                            try:
+                                create_resp = client.browser_create(
+                                    {
+                                        "workspaceId": workspace_id,
+                                        "projectId": project_id,
+                                        "windowName": window_name,
+                                        "defaultOpenUrl": [task["url"]],
+                                        "proxyInfo": proxy_info,
+                                        "fingerInfo": build_finger_info_base(),
+                                    }
+                                )
+                                dir_id = extract_dir_id(create_resp)
                                 update_slot_dir_id(slot, window_name, dir_id)
-                                progress_board.update(slot_index, task_order + 1, "额度不足，已复用现有窗口")
-                            else:
-                                raise ValueError("窗口额度不足，且没有可复用的现有窗口")
+                                progress_board.update(slot_index, task_order + 1, "创建窗口成功")
+                            except RoxyAPIError as exc:
+                                if exc.code != 409:
+                                    raise
+                                reusable_dir_id = acquire_reusable_dir_id()
+                                if reusable_dir_id:
+                                    dir_id = reusable_dir_id
+                                    update_slot_dir_id(slot, window_name, dir_id)
+                                    progress_board.update(slot_index, task_order + 1, "额度不足，已复用现有窗口")
+                                else:
+                                    raise ValueError("窗口额度不足，且没有可复用的现有窗口")
 
-                if not isinstance(dir_id, str) or not dir_id:
-                    raise ValueError(f"[{window_name}] 无有效 dirId，无法继续执行")
+                    if not isinstance(dir_id, str) or not dir_id:
+                        raise ValueError(f"[{window_name}] 无有效 dirId，无法继续执行")
 
-                # 自动按屏幕宽度平铺窗口位置与大小。
-                client.browser_auto_tile_window_layout(
-                    workspace_id=workspace_id,
-                    dir_id=dir_id,
-                    slot_index=slot_index,
-                    screen_width=screen_width,
-                    width=WINDOW_WIDTH,
-                    height=WINDOW_HEIGHT,
-                    extra_payload={"fingerInfo": build_finger_info_base()},
-                )
-                progress_board.update(slot_index, task_order + 1, "调整窗口布局")
+                    # 自动按屏幕宽度平铺窗口位置与大小。
+                    client.browser_auto_tile_window_layout(
+                        workspace_id=workspace_id,
+                        dir_id=dir_id,
+                        slot_index=slot_index,
+                        screen_width=screen_width,
+                        width=WINDOW_WIDTH,
+                        height=WINDOW_HEIGHT,
+                        extra_payload={"fingerInfo": build_finger_info_base()},
+                    )
+                    progress_board.update(slot_index, task_order + 1, "调整窗口布局")
 
-                if not opened_this_round:
-                    # 每个窗口每轮仅执行一次随机指纹，放在本轮首次任务开始前。
-                    client.browser_random_env(
-                        {
+                    if not opened_this_round:
+                        # 每个窗口每轮仅执行一次随机指纹，放在本轮首次任务开始前。
+                        client.browser_random_env(
+                            {
+                                "workspaceId": workspace_id,
+                                "dirId": dir_id,
+                            }
+                        )
+                        progress_board.update(slot_index, task_order + 1, "刷新指纹")
+
+                        if CLEAR_LOCAL_CACHE_BEFORE_OPEN:
+                            client.browser_clear_local_cache({"dirIds": [dir_id]})
+                            progress_board.update(slot_index, task_order + 1, "清理本地缓存")
+                        if CLEAR_SERVER_CACHE_BEFORE_OPEN:
+                            client.browser_clear_server_cache(
+                                {"workspaceId": workspace_id, "dirIds": [dir_id]}
+                            )
+                            progress_board.update(slot_index, task_order + 1, "清理服务端缓存")
+
+                        open_payload = {
                             "workspaceId": workspace_id,
                             "dirId": dir_id,
+                            "args": build_open_args(),
                         }
-                    )
-                    progress_board.update(slot_index, task_order + 1, "刷新指纹")
-
-                    if CLEAR_LOCAL_CACHE_BEFORE_OPEN:
-                        client.browser_clear_local_cache({"dirIds": [dir_id]})
-                        progress_board.update(slot_index, task_order + 1, "清理本地缓存")
-                    if CLEAR_SERVER_CACHE_BEFORE_OPEN:
-                        client.browser_clear_server_cache(
-                            {"workspaceId": workspace_id, "dirIds": [dir_id]}
+                        open_resp = client.browser_open(open_payload)
+                        progress_board.update(slot_index, task_order + 1, "窗口已打开")
+                        open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
+                        last_http_endpoint = normalize_http_endpoint(
+                            open_data.get("http") if isinstance(open_data, dict) else None
                         )
-                        progress_board.update(slot_index, task_order + 1, "清理服务端缓存")
+                        opened_this_round = True
 
-                    open_payload = {
-                        "workspaceId": workspace_id,
-                        "dirId": dir_id,
-                        "args": build_open_args(),
-                    }
-                    open_resp = client.browser_open(open_payload)
-                    progress_board.update(slot_index, task_order + 1, "窗口已打开")
-                    open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
-                    last_http_endpoint = normalize_http_endpoint(
-                        open_data.get("http") if isinstance(open_data, dict) else None
-                    )
-                    opened_this_round = True
+                    loaded = False
+                    if last_http_endpoint:
+                        progress_board.update(slot_index, task_order + 1, "同窗导航并等待加载")
+                        loaded = navigate_page_to_url(
+                            http_endpoint=last_http_endpoint,
+                            target_url=task["url"],
+                        )
+                    else:
+                        progress_board.update(slot_index, task_order + 1, "缺少调试地址，加载失败")
 
-                loaded = False
-                if last_http_endpoint:
-                    progress_board.update(slot_index, task_order + 1, "同窗导航并等待加载")
-                    loaded = navigate_page_to_url(
-                        http_endpoint=last_http_endpoint,
-                        target_url=task["url"],
-                    )
-                else:
-                    progress_board.update(slot_index, task_order + 1, "缺少调试地址，加载失败")
-
-                if loaded:
-                    progress_board.update(slot_index, task_order + 1, "页面已加载")
-                    sleep_random(WAIT_AFTER_OPEN_RANGE, f"[{window_name}] wait_after_open")
-                    progress_board.update(slot_index, task_order + 1, "执行点击")
-                    clicked = click_page_once(http_endpoint=last_http_endpoint, target_url=task["url"])
-                    progress_board.update(
-                        slot_index,
-                        task_order + 1,
-                        "点击完成" if clicked else "点击失败",
-                    )
-                    sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
-                else:
-                    progress_board.update(slot_index, task_order + 1, "页面未确认加载，跳过点击")
-            except Exception as exc:
-                progress_board.update(slot_index, task_order + 1, f"失败: {type(exc).__name__}")
-                log_status("任务失败", f"{window_name} 执行失败，已跳过: {exc}")
-        if AUTO_CLOSE_AFTER_TASK:
-            final_dir_id = slot.get("dir_id")
-            if isinstance(final_dir_id, str) and final_dir_id:
-                try:
-                    client.browser_close(
-                        {
-                            "workspaceId": workspace_id,
-                            "dirId": final_dir_id,
-                        }
-                    )
-                    progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，已关闭")
+                    if loaded:
+                        progress_board.update(slot_index, task_order + 1, "页面已加载")
+                        sleep_random(WAIT_AFTER_OPEN_RANGE, f"[{window_name}] wait_after_open")
+                        progress_board.update(slot_index, task_order + 1, "执行点击")
+                        clicked = click_page_once(http_endpoint=last_http_endpoint, target_url=task["url"])
+                        progress_board.update(
+                            slot_index,
+                            task_order + 1,
+                            "点击完成" if clicked else "点击失败",
+                        )
+                        sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
+                    else:
+                        progress_board.update(slot_index, task_order + 1, "页面未确认加载，跳过点击")
                 except Exception as exc:
-                    progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，关窗失败")
-                    log_status("关窗失败", f"{window_name} 本轮结束关闭失败: {exc}")
+                    progress_board.update(slot_index, task_order + 1, f"失败: {type(exc).__name__}")
+                    log_status("任务失败", f"{window_name} 执行失败，已跳过: {exc}")
+
+            if AUTO_CLOSE_AFTER_TASK:
+                final_dir_id = slot.get("dir_id")
+                if isinstance(final_dir_id, str) and final_dir_id:
+                    try:
+                        client.browser_close(
+                            {
+                                "workspaceId": workspace_id,
+                                "dirId": final_dir_id,
+                            }
+                        )
+                        progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，已关闭")
+                    except Exception as exc:
+                        progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，关窗失败")
+                        log_status("关窗失败", f"{window_name} 本轮结束关闭失败: {exc}")
+                else:
+                    progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，无可关闭窗口")
             else:
-                progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，无可关闭窗口")
-            return
-        progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，窗口保留")
+                progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，窗口保留")
+
+            # 窗口独立轮次：本窗口完成即进入下一轮，不等待其他窗口。
+            round_elapsed = time.monotonic() - round_start_at
+            log_status("窗口轮次", f"{window_name} 第 {window_round} 轮完成，用时 {round_elapsed:.2f}s")
 
     workers: list[threading.Thread] = []
     for slot_index in range(effective_window_count):
@@ -929,7 +1011,6 @@ def run_one_cycle(client: RoxyClient, cycle_no: int, window_round_counter: dict[
 
     for worker in workers:
         worker.join()
-    log_status("轮次结束", f"第 {cycle_no} 轮执行完成")
 
 
 def main() -> None:
@@ -942,41 +1023,17 @@ def main() -> None:
     token_source = "命令行参数" if token_arg else "默认配置"
     log_status("启动配置", f"token 来源: {token_source}")
     client = RoxyClient(token=runtime_token, port=PORT, timeout=120)
-    cycle_no = 1
     try:
-        window_round_counter: dict[int, int] = {}
-        while True:
-            cycle_start_at = time.monotonic()
-            cycle_target = random.uniform(*CYCLE_TARGET_DURATION_RANGE)
-            try:
-                run_one_cycle(client, cycle_no, window_round_counter)
-            except KeyboardInterrupt:
-                if IGNORE_KEYBOARD_INTERRUPT:
-                    log_status("中断忽略", "收到 Ctrl+C，按配置忽略并继续循环")
-                else:
-                    raise
-            except Exception as exc:
-                log_status("轮次失败", f"cycle {cycle_no} 异常: {exc}")
-                backoff = random.uniform(*FATAL_BACKOFF_RANGE)
-                log_status("异常退避", f"等待 {backoff:.2f}s 后继续下一轮")
-                time.sleep(backoff)
-
-            cycle_elapsed = time.monotonic() - cycle_start_at
-            remain = cycle_target - cycle_elapsed
-            if remain > 0:
-                log_status(
-                    "节奏控制",
-                    f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
-                    f"目标 {cycle_target:.2f}s, 补等待 {remain:.2f}s",
-                )
-                time.sleep(remain)
-            else:
-                log_status(
-                    "节奏控制",
-                    f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
-                    f"超过目标 {cycle_target:.2f}s, 直接开始下一轮",
-                )
-            cycle_no += 1
+        run_one_cycle(client)
+    except KeyboardInterrupt:
+        if IGNORE_KEYBOARD_INTERRUPT:
+            log_status("中断提示", "收到 Ctrl+C，当前模式不重启线程，已退出")
+        raise
+    except Exception as exc:
+        log_status("运行失败", f"窗口独立轮次模式异常: {exc}")
+        backoff = random.uniform(*FATAL_BACKOFF_RANGE)
+        log_status("异常退避", f"等待 {backoff:.2f}s 后退出")
+        time.sleep(backoff)
     finally:
         client.close()
 
