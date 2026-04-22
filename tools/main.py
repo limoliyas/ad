@@ -44,7 +44,7 @@ WINDOW_HEIGHT = 400
 SCREEN_WIDTH_OVERRIDE = None
 WINDOW_NAME_PREFIX = "Auto-Visit-"
 # 是否启用无头模式打开浏览器窗口（通过 browser_open 的 args 注入）。
-HEADLESS_MODE = False
+HEADLESS_MODE = True
 # 是否仅使用已有窗口（不创建新窗口）。
 USE_EXISTING_WINDOWS_ONLY = False
 # 指纹中的时区是否跟随 IP 自动匹配（文档字段: fingerInfo.isTimeZone）。
