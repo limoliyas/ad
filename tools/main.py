@@ -27,11 +27,13 @@ WINDOW_NAME_PREFIX = "Auto-Visit-"
 # 是否仅使用已有窗口（不创建新窗口）。
 USE_EXISTING_WINDOWS_ONLY = False
 # 每个任务完成后是否立即关闭窗口。
-AUTO_CLOSE_AFTER_TASK = True
+AUTO_CLOSE_AFTER_TASK = False
 # 打开窗口后的随机等待区间（秒）。
 WAIT_AFTER_OPEN_RANGE = (3.0, 6.0)
 # 点击页面后的随机等待区间（秒）。
 WAIT_AFTER_CLICK_RANGE = (2.0, 4.0)
+# 每一轮全部任务执行完成后的随机延迟区间（秒）。
+CYCLE_DELAY_RANGE = (10.0, 20.0)
 # 点击时优先使用页面中心，避免点到无效区域。
 CLICK_RATIO_X = 0.3
 CLICK_RATIO_Y = 0.4
@@ -320,9 +322,8 @@ def sleep_random(wait_range: tuple[float, float], label: str) -> float:
     return duration
 
 
-client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
-
-try:
+def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
+    print(f"========== cycle {cycle_no} start ==========")
     tasks = build_visit_tasks(TARGET_URLS, PROXY_RAWS)
     max_windows = len(tasks)
     if WINDOW_COUNT <= 0:
@@ -374,7 +375,7 @@ try:
     for task_idx, task in enumerate(tasks):
         slot_index = task_idx % effective_window_count
         slot = slots[slot_index]
-        round_index = task_idx // WINDOW_COUNT + 1
+        round_index = task_idx // effective_window_count + 1
         window_name = slot["window_name"]
         proxy_info = build_proxy_info(task["proxy_raw"])
         dir_id = slot["dir_id"]
@@ -492,8 +493,20 @@ try:
                     }
                 )
                 print(f"[{window_name}] close_resp:", close_resp)
+    print(f"========== cycle {cycle_no} done ==========")
 
-except (RoxyAPIError, RoxyClientError, ValueError) as e:
-    print("调用失败:", e)
+
+client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
+cycle_no = 1
+try:
+    while True:
+        try:
+            run_one_cycle(client, cycle_no)
+        except (RoxyAPIError, RoxyClientError, ValueError) as e:
+            print(f"cycle {cycle_no} 失败:", e)
+        sleep_random(CYCLE_DELAY_RANGE, f"cycle {cycle_no} delay_before_next")
+        cycle_no += 1
+except KeyboardInterrupt:
+    print("收到中断信号，停止循环")
 finally:
     client.close()
