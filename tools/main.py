@@ -24,6 +24,8 @@ WINDOW_WIDTH = 600
 WINDOW_HEIGHT = 400
 SCREEN_WIDTH_OVERRIDE = None
 WINDOW_NAME_PREFIX = "Auto-Visit-"
+# 是否启用无头模式打开浏览器窗口（通过 browser_open 的 args 注入）。
+HEADLESS_MODE = False
 # 是否仅使用已有窗口（不创建新窗口）。
 USE_EXISTING_WINDOWS_ONLY = False
 # 指纹中的时区是否跟随 IP 自动匹配（文档字段: fingerInfo.isTimeZone）。
@@ -50,6 +52,20 @@ CLICK_RATIO_Y = 0.4
 CLEAR_LOCAL_CACHE_BEFORE_OPEN = True
 # 每轮打开前是否清理服务器缓存，进一步避免历史标签页回灌。
 CLEAR_SERVER_CACHE_BEFORE_OPEN = True
+
+
+# 输出统一中文状态日志，便于观察任务进度。
+def log_status(stage: str, message: str) -> None:
+    now = time.strftime("%H:%M:%S")
+    print(f"[{now}][{stage}] {message}")
+
+
+# 生成 open 接口参数，按开关启用无头模式。
+def build_open_args() -> list[str]:
+    args: list[str] = []
+    if HEADLESS_MODE:
+        args.append("--headless=new")
+    return args
 
 
 # 解析 host:port:username:password 形式的代理字符串。
@@ -353,7 +369,7 @@ def sleep_random(wait_range: tuple[float, float], label: str) -> float:
 
 
 def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
-    print(f"========== cycle {cycle_no} start ==========")
+    log_status("轮次开始", f"第 {cycle_no} 轮开始执行")
     tasks = build_visit_tasks(TARGET_URLS, PROXY_RAWS)
     max_windows = len(tasks)
     if WINDOW_COUNT <= 0:
@@ -374,10 +390,10 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
         workspace_name=WORKSPACE_NAME,
         project_name=PROJECT_NAME,
     )
-    print("workspace_id:", workspace_id, "project_id:", project_id)
+    log_status("空间信息", f"workspace_id={workspace_id}, project_id={project_id}")
 
     screen_width = get_screen_width(SCREEN_WIDTH_OVERRIDE)
-    print("screen_width:", screen_width)
+    log_status("屏幕信息", f"screen_width={screen_width}, 无头模式={'开启' if HEADLESS_MODE else '关闭'}")
 
     existing_rows = list_existing_windows(client, workspace_id)
     window_name_map = build_window_name_map(existing_rows)
@@ -416,9 +432,10 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
             proxy_info = build_proxy_info(task["proxy_raw"])
             dir_id = slot["dir_id"]
 
-            print(
+            log_status(
+                "任务开始",
                 f"task[{task_idx + 1}/{len(tasks)}] round={round_index} slot={slot_index + 1} "
-                f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}"
+                f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}",
             )
 
             if dir_id:
@@ -494,12 +511,12 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                 )
                 print(f"[{window_name}] clear_server_resp:", clear_server_resp)
 
-            open_resp = client.browser_open(
-                {
-                    "workspaceId": workspace_id,
-                    "dirId": dir_id,
-                }
-            )
+            open_payload = {
+                "workspaceId": workspace_id,
+                "dirId": dir_id,
+                "args": build_open_args(),
+            }
+            open_resp = client.browser_open(open_payload)
             print(f"[{window_name}] open_resp:", open_resp)
             opened_windows.append(
                 {
@@ -543,7 +560,7 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                         }
                     )
                     print(f"[{window_name}] close_resp:", close_resp)
-    print(f"========== cycle {cycle_no} done ==========")
+    log_status("轮次结束", f"第 {cycle_no} 轮执行完成")
 
 
 client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
@@ -555,22 +572,24 @@ try:
         try:
             run_one_cycle(client, cycle_no)
         except (RoxyAPIError, RoxyClientError, ValueError) as e:
-            print(f"cycle {cycle_no} 失败:", e)
+            log_status("轮次失败", f"cycle {cycle_no} 失败: {e}")
         cycle_elapsed = time.monotonic() - cycle_start_at
         remain = cycle_target - cycle_elapsed
         if remain > 0:
-            print(
-                f"cycle {cycle_no} 节奏控制: 已运行 {cycle_elapsed:.2f}s, "
-                f"目标 {cycle_target:.2f}s, 补等待 {remain:.2f}s"
+            log_status(
+                "节奏控制",
+                f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
+                f"目标 {cycle_target:.2f}s, 补等待 {remain:.2f}s",
             )
             time.sleep(remain)
         else:
-            print(
-                f"cycle {cycle_no} 节奏控制: 已运行 {cycle_elapsed:.2f}s, "
-                f"超过目标 {cycle_target:.2f}s, 直接开始下一轮"
+            log_status(
+                "节奏控制",
+                f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
+                f"超过目标 {cycle_target:.2f}s, 直接开始下一轮",
             )
         cycle_no += 1
 except KeyboardInterrupt:
-    print("收到中断信号，停止循环")
+    log_status("停止运行", "收到中断信号，停止循环")
 finally:
     client.close()
