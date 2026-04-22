@@ -9,26 +9,36 @@ from tools.roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
 TARGET_URLS = [
-    "https://vids.st/v/23671",
+    "https://vids.st/v/23803",
+    "https://vids.st/v/23812",
 ]
 PROXY_RAWS = [
     "165.154.173.254:4733:G8g3TKqdi7fX:7G6nUjZB1w",
+    "165.154.173.254:5103:gGfVV1TbhVqN:8MP7QPbRF9bY",
 ]
 # 窗口槽位数量：槽位少会自动多轮执行，直到所有 URL+代理 组合都跑完。
-WINDOW_COUNT = 1
+WINDOW_COUNT = 2
 WORKSPACE_NAME = None
 PROJECT_NAME = None
 WINDOW_WIDTH = 400
 WINDOW_HEIGHT = 400
 SCREEN_WIDTH_OVERRIDE = None
 WINDOW_NAME_PREFIX = "Auto-Visit-"
+# 是否仅使用已有窗口（不创建新窗口）。
+USE_EXISTING_WINDOWS_ONLY = False
+# 每个任务完成后是否立即关闭窗口。
+AUTO_CLOSE_AFTER_TASK = True
 # 打开窗口后的随机等待区间（秒）。
 WAIT_AFTER_OPEN_RANGE = (3.0, 6.0)
 # 点击页面后的随机等待区间（秒）。
 WAIT_AFTER_CLICK_RANGE = (2.0, 4.0)
 # 点击时优先使用页面中心，避免点到无效区域。
-CLICK_RATIO_X = 0.5
-CLICK_RATIO_Y = 0.5
+CLICK_RATIO_X = 0.3
+CLICK_RATIO_Y = 0.4
+# 每轮打开前是否清理本地缓存，尽量避免同一窗口残留多个历史标签页。
+CLEAR_LOCAL_CACHE_BEFORE_OPEN = True
+# 每轮打开前是否清理服务器缓存，进一步避免历史标签页回灌。
+CLEAR_SERVER_CACHE_BEFORE_OPEN = True
 
 
 # 解析 host:port:username:password 形式的代理字符串。
@@ -216,6 +226,50 @@ def normalize_http_endpoint(http_value: Any) -> str | None:
     return f"http://{http_value}"
 
 
+# 等待目标页面加载完成（domcontentloaded + load）。
+def wait_page_loaded(http_endpoint: str, target_url: str) -> bool:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        print(f"load_wait_skip: Playwright 不可用: {exc}")
+        return False
+
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(http_endpoint)
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+
+            page = None
+            for _ in range(30):
+                for p in context.pages:
+                    if target_url in (p.url or ""):
+                        page = p
+                        break
+                if page:
+                    break
+                time.sleep(0.5)
+
+            if page is None and context.pages:
+                page = context.pages[0]
+            if page is None:
+                page = context.new_page()
+                page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+
+            page.bring_to_front()
+            page.wait_for_load_state("domcontentloaded", timeout=60000)
+            try:
+                page.wait_for_load_state("load", timeout=60000)
+            except Exception:
+                # 某些页面可能持续流式加载，这里不强制失败。
+                pass
+
+            browser.close()
+            return True
+    except Exception as exc:
+        print(f"load_wait_failed: {exc}")
+        return False
+
+
 # 在已打开页面中心执行一次点击。
 def click_page_once(http_endpoint: str, target_url: str) -> bool:
     try:
@@ -277,6 +331,11 @@ try:
         raise ValueError(
             f"窗口数量超过可分配组合上限：WINDOW_COUNT={WINDOW_COUNT}, 上限={max_windows}"
         )
+    effective_window_count = min(WINDOW_COUNT, len(tasks))
+    if effective_window_count < WINDOW_COUNT:
+        print(
+            f"提示: 当前组合任务数仅 {len(tasks)}，因此本轮最多只会使用 {effective_window_count} 个窗口槽位"
+        )
 
     workspace_resp = client.browser_workspace({"page_index": 1, "page_size": 100})
     workspace_id, project_id = resolve_workspace_project_id(
@@ -296,7 +355,7 @@ try:
     # 初始化窗口槽位：优先绑定同名窗口，其次复用其他已有窗口，最后才尝试创建。
     slots: list[dict[str, Any]] = []
     assigned_ids: set[str] = set()
-    for slot_index in range(WINDOW_COUNT):
+    for slot_index in range(effective_window_count):
         window_name = f"{WINDOW_NAME_PREFIX}{slot_index + 1}"
         dir_id = window_name_map.get(window_name)
         if isinstance(dir_id, str) and dir_id:
@@ -313,7 +372,7 @@ try:
 
     # 按任务顺序执行；窗口槽位不足时复用窗口并执行多轮。
     for task_idx, task in enumerate(tasks):
-        slot_index = task_idx % WINDOW_COUNT
+        slot_index = task_idx % effective_window_count
         slot = slots[slot_index]
         round_index = task_idx // WINDOW_COUNT + 1
         window_name = slot["window_name"]
@@ -335,11 +394,14 @@ try:
                     "windowName": window_name,
                     "defaultOpenUrl": [task["url"]],
                     "proxyInfo": proxy_info,
+                    "fingerInfo": {"syncTab": False},
                 }
             )
             print(f"[{window_name}] mdf_resp:", mdf_resp)
         else:
             # 槽位无可用窗口时尝试创建；若额度不足则降级复用剩余已有窗口。
+            if USE_EXISTING_WINDOWS_ONLY:
+                raise ValueError(f"[{window_name}] 未找到可复用窗口，且已禁用创建新窗口")
             try:
                 create_resp = client.browser_create(
                     {
@@ -348,6 +410,7 @@ try:
                         "windowName": window_name,
                         "defaultOpenUrl": [task["url"]],
                         "proxyInfo": proxy_info,
+                        "fingerInfo": {"syncTab": False},
                     }
                 )
                 dir_id = extract_dir_id(create_resp)
@@ -384,7 +447,16 @@ try:
         )
         print(f"[{window_name}] layout_resp:", layout_resp)
 
-        # 打开窗口。
+        if CLEAR_LOCAL_CACHE_BEFORE_OPEN:
+            clear_local_resp = client.browser_clear_local_cache({"dirIds": [dir_id]})
+            print(f"[{window_name}] clear_local_resp:", clear_local_resp)
+        if CLEAR_SERVER_CACHE_BEFORE_OPEN:
+            clear_server_resp = client.browser_clear_server_cache(
+                {"workspaceId": workspace_id, "dirIds": [dir_id]}
+            )
+            print(f"[{window_name}] clear_server_resp:", clear_server_resp)
+
+        # 打开窗口。每个任务结束后立即关窗，避免同一窗口并行挂多个 URL。
         open_resp = client.browser_open(
             {
                 "workspaceId": workspace_id,
@@ -393,18 +465,33 @@ try:
         )
         print(f"[{window_name}] open_resp:", open_resp)
 
-        sleep_random(WAIT_AFTER_OPEN_RANGE, f"[{window_name}] wait_after_open")
+        try:
+            open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
+            http_endpoint = normalize_http_endpoint(open_data.get("http") if isinstance(open_data, dict) else None)
+            loaded = False
+            if http_endpoint:
+                loaded = wait_page_loaded(http_endpoint=http_endpoint, target_url=task["url"])
+                print(f"[{window_name}] page_loaded:", loaded)
+            else:
+                print(f"[{window_name}] page_loaded: False (缺少 http 调试地址)")
 
-        open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
-        http_endpoint = normalize_http_endpoint(open_data.get("http") if isinstance(open_data, dict) else None)
+            if loaded:
+                sleep_random(WAIT_AFTER_OPEN_RANGE, f"[{window_name}] wait_after_open")
 
-        if http_endpoint:
-            clicked = click_page_once(http_endpoint=http_endpoint, target_url=task["url"])
-            print(f"[{window_name}] clicked:", clicked)
-        else:
-            print(f"[{window_name}] clicked: False (缺少 http 调试地址)")
-
-        sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
+                clicked = click_page_once(http_endpoint=http_endpoint, target_url=task["url"])
+                print(f"[{window_name}] clicked:", clicked)
+                sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
+            else:
+                print(f"[{window_name}] 跳过等待与点击：页面未确认加载完成")
+        finally:
+            if AUTO_CLOSE_AFTER_TASK:
+                close_resp = client.browser_close(
+                    {
+                        "workspaceId": workspace_id,
+                        "dirId": dir_id,
+                    }
+                )
+                print(f"[{window_name}] close_resp:", close_resp)
 
 except (RoxyAPIError, RoxyClientError, ValueError) as e:
     print("调用失败:", e)
