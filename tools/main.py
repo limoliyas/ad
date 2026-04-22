@@ -16,6 +16,8 @@ except ModuleNotFoundError:
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
 TARGET_URLS = [
+    "https://vids.st/v/23943",
+    "https://vids.st/v/23942",
     "https://vids.st/v/23940",
     "https://vids.st/v/23937",
     "https://vids.st/v/23935",
