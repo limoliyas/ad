@@ -822,20 +822,24 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
             except Exception as exc:
                 progress_board.update(slot_index, task_order + 1, f"失败: {type(exc).__name__}")
                 log_status("任务失败", f"{window_name} 执行失败，已跳过: {exc}")
-            finally:
-                if AUTO_CLOSE_AFTER_TASK and isinstance(dir_id, str) and dir_id:
-                    try:
-                        client.browser_close(
-                            {
-                                "workspaceId": workspace_id,
-                                "dirId": dir_id,
-                            }
-                        )
-                        progress_board.update(slot_index, task_order + 1, "已关闭窗口")
-                    except Exception as exc:
-                        progress_board.update(slot_index, task_order + 1, "关窗失败")
-                        log_status("关窗失败", f"{window_name} 关闭失败，将在后续任务继续复用: {exc}")
-        progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成")
+        if AUTO_CLOSE_AFTER_TASK:
+            final_dir_id = slot.get("dir_id")
+            if isinstance(final_dir_id, str) and final_dir_id:
+                try:
+                    client.browser_close(
+                        {
+                            "workspaceId": workspace_id,
+                            "dirId": final_dir_id,
+                        }
+                    )
+                    progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，已关闭")
+                except Exception as exc:
+                    progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，关窗失败")
+                    log_status("关窗失败", f"{window_name} 本轮结束关闭失败: {exc}")
+            else:
+                progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，无可关闭窗口")
+            return
+        progress_board.update(slot_index, len(tasks_for_slot), "本窗口任务完成，窗口保留")
 
     workers: list[threading.Thread] = []
     for slot_index in range(effective_window_count):
