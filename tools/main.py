@@ -196,6 +196,16 @@ def build_window_name_map(rows: list[dict]) -> dict[str, str]:
     return name_map
 
 
+# 提取窗口列表中的 dirId 队列。
+def extract_window_ids(rows: list[dict]) -> list[str]:
+    ids: list[str] = []
+    for row in rows:
+        dir_id = row.get("dirId")
+        if isinstance(dir_id, str) and dir_id:
+            ids.append(dir_id)
+    return ids
+
+
 # 规范化 http 调试地址。
 def normalize_http_endpoint(http_value: Any) -> str | None:
     if not isinstance(http_value, str) or not http_value.strip():
@@ -281,14 +291,34 @@ try:
 
     existing_rows = list_existing_windows(client, workspace_id)
     window_name_map = build_window_name_map(existing_rows)
+    existing_ids = extract_window_ids(existing_rows)
+
+    # 初始化窗口槽位：优先绑定同名窗口，其次复用其他已有窗口，最后才尝试创建。
+    slots: list[dict[str, Any]] = []
+    assigned_ids: set[str] = set()
+    for slot_index in range(WINDOW_COUNT):
+        window_name = f"{WINDOW_NAME_PREFIX}{slot_index + 1}"
+        dir_id = window_name_map.get(window_name)
+        if isinstance(dir_id, str) and dir_id:
+            assigned_ids.add(dir_id)
+        slots.append({"window_name": window_name, "dir_id": dir_id})
+
+    reusable_existing_ids = [x for x in existing_ids if x not in assigned_ids]
+    for slot in slots:
+        if slot["dir_id"]:
+            continue
+        if reusable_existing_ids:
+            slot["dir_id"] = reusable_existing_ids.pop(0)
+            assigned_ids.add(slot["dir_id"])
 
     # 按任务顺序执行；窗口槽位不足时复用窗口并执行多轮。
     for task_idx, task in enumerate(tasks):
         slot_index = task_idx % WINDOW_COUNT
+        slot = slots[slot_index]
         round_index = task_idx // WINDOW_COUNT + 1
-        window_name = f"{WINDOW_NAME_PREFIX}{slot_index + 1}"
+        window_name = slot["window_name"]
         proxy_info = build_proxy_info(task["proxy_raw"])
-        dir_id = window_name_map.get(window_name)
+        dir_id = slot["dir_id"]
 
         print(
             f"task[{task_idx + 1}/{len(tasks)}] round={round_index} slot={slot_index + 1} "
@@ -309,19 +339,30 @@ try:
             )
             print(f"[{window_name}] mdf_resp:", mdf_resp)
         else:
-            # 窗口不存在：创建新窗口。
-            create_resp = client.browser_create(
-                {
-                    "workspaceId": workspace_id,
-                    "projectId": project_id,
-                    "windowName": window_name,
-                    "defaultOpenUrl": [task["url"]],
-                    "proxyInfo": proxy_info,
-                }
-            )
-            dir_id = extract_dir_id(create_resp)
-            window_name_map[window_name] = dir_id
-            print(f"[{window_name}] create_resp:", create_resp)
+            # 槽位无可用窗口时尝试创建；若额度不足则降级复用剩余已有窗口。
+            try:
+                create_resp = client.browser_create(
+                    {
+                        "workspaceId": workspace_id,
+                        "projectId": project_id,
+                        "windowName": window_name,
+                        "defaultOpenUrl": [task["url"]],
+                        "proxyInfo": proxy_info,
+                    }
+                )
+                dir_id = extract_dir_id(create_resp)
+                slot["dir_id"] = dir_id
+                window_name_map[window_name] = dir_id
+                print(f"[{window_name}] create_resp:", create_resp)
+            except RoxyAPIError as exc:
+                if exc.code != 409:
+                    raise
+                if reusable_existing_ids:
+                    dir_id = reusable_existing_ids.pop(0)
+                    slot["dir_id"] = dir_id
+                    print(f"[{window_name}] create_skip_409: 额度不足，改用现有窗口 {dir_id}")
+                else:
+                    raise ValueError("窗口额度不足，且没有可复用的现有窗口")
 
         # 每次打开前都先随机指纹。
         random_env_resp = client.browser_random_env(
