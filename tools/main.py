@@ -16,15 +16,17 @@ except ModuleNotFoundError:
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
 TARGET_URLS = [
-    "https://vids.st/e/23803",
-    "https://vids.st/e/23812",
+    "https://vids.st/v/23931",
 ]
 PROXY_RAWS = [
-    "165.154.173.254:4733:G8g3TKqdi7fX:7G6nUjZB1w",
-    "165.154.173.254:5103:gGfVV1TbhVqN:8MP7QPbRF9bY",
+    "proxy.veproxy.com:10000:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
+    "proxy.veproxy.com:10001:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
+    "proxy.veproxy.com:10002:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
+    "proxy.veproxy.com:10003:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
+    "proxy.veproxy.com:10004:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
 ]
 # 窗口槽位数量：槽位少会自动多轮执行，直到所有 URL+代理 组合都跑完。
-WINDOW_COUNT = 2
+WINDOW_COUNT = 5
 WORKSPACE_NAME = None
 PROJECT_NAME = None
 WINDOW_WIDTH = 600
@@ -51,7 +53,7 @@ PAGE_RELOAD_MAX_RETRIES = 2
 PAGE_RELOAD_DELAY_RANGE = (1.0, 2.0)
 # 每一轮目标总时长区间（秒），默认约 3 分钟。
 # 规则：从一轮开始计时，若本轮执行时长小于目标时长则补等待；超过则直接下一轮。
-CYCLE_TARGET_DURATION_RANGE = (170.0, 190.0)
+CYCLE_TARGET_DURATION_RANGE = (60.0, 70.0)
 # 点击时优先使用页面中心，避免点到无效区域。
 CLICK_RATIO_X = 0.3
 CLICK_RATIO_Y = 0.4
