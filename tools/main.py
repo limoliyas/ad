@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ except ModuleNotFoundError:
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
 # TARGET_URLS = [
+#     "https://vids.st/v/23947",
 #     "https://vids.st/v/23946",
 #     "https://vids.st/v/23943",
 #     "https://vids.st/v/23942",
@@ -509,7 +511,6 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
     total_tasks = sum(len(tasks) for tasks in slot_tasks)
     if total_tasks <= 0:
         raise ValueError("本轮没有可执行任务，请检查 TARGET_URLS 配置")
-    max_rounds = max(len(tasks) for tasks in slot_tasks)
     for slot_index, tasks_for_slot in enumerate(slot_tasks):
         log_status(
             "窗口任务",
@@ -549,28 +550,41 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
             slot["dir_id"] = reusable_existing_ids.pop(0)
             assigned_ids.add(slot["dir_id"])
 
-    # 按轮执行：每轮各窗口最多执行一个任务，先全部开窗，再做后续等待/点击/关闭。
-    task_seq_no = 0
-    for round_no in range(max_rounds):
-        round_index = round_no + 1
-        opened_windows: list[dict[str, Any]] = []
+    # 独立窗口并发执行：每个槽位按照自己的任务队列串行处理，不再按“轮次”互相等待。
+    task_seq_no = {"value": 0}
+    task_seq_lock = threading.Lock()
+    shared_lock = threading.Lock()
 
-        # 第一阶段：准备并打开本轮所有窗口（实现“同时打开”的效果）。
-        for slot_index in range(effective_window_count):
-            tasks_for_slot = slot_tasks[slot_index]
-            if round_no >= len(tasks_for_slot):
-                continue
-            task = tasks_for_slot[round_no]
-            task_seq_no += 1
-            slot = slots[slot_index]
-            window_name = slot["window_name"]
+    def next_task_seq() -> int:
+        with task_seq_lock:
+            task_seq_no["value"] += 1
+            return task_seq_no["value"]
+
+    # 针对共享状态（窗口ID池/映射）加锁，避免并发读写冲突。
+    def acquire_reusable_dir_id() -> str | None:
+        with shared_lock:
+            if reusable_existing_ids:
+                return reusable_existing_ids.pop(0)
+            return None
+
+    def update_slot_dir_id(slot_ref: dict[str, Any], window_name_ref: str, dir_id_ref: str) -> None:
+        with shared_lock:
+            slot_ref["dir_id"] = dir_id_ref
+            window_name_map[window_name_ref] = dir_id_ref
+
+    def run_slot_tasks(slot_index: int) -> None:
+        slot = slots[slot_index]
+        window_name = slot["window_name"]
+        tasks_for_slot = slot_tasks[slot_index]
+        for task_order, task in enumerate(tasks_for_slot):
+            seq_no = next_task_seq()
+            dir_id: str | None = slot.get("dir_id")
             try:
                 proxy_info = build_proxy_info(task["proxy_raw"])
-                dir_id = slot["dir_id"]
-
                 log_status(
                     "任务开始",
-                    f"task[{task_seq_no}/{total_tasks}] round={round_index}/{max_rounds} slot={slot_index + 1} "
+                    f"task[{seq_no}/{total_tasks}] slot={slot_index + 1} "
+                    f"slot_task={task_order + 1}/{len(tasks_for_slot)} "
                     f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}",
                 )
 
@@ -604,18 +618,21 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                             }
                         )
                         dir_id = extract_dir_id(create_resp)
-                        slot["dir_id"] = dir_id
-                        window_name_map[window_name] = dir_id
+                        update_slot_dir_id(slot, window_name, dir_id)
                         print(f"[{window_name}] create_resp:", create_resp)
                     except RoxyAPIError as exc:
                         if exc.code != 409:
                             raise
-                        if reusable_existing_ids:
-                            dir_id = reusable_existing_ids.pop(0)
-                            slot["dir_id"] = dir_id
+                        reusable_dir_id = acquire_reusable_dir_id()
+                        if reusable_dir_id:
+                            dir_id = reusable_dir_id
+                            update_slot_dir_id(slot, window_name, dir_id)
                             print(f"[{window_name}] create_skip_409: 额度不足，改用现有窗口 {dir_id}")
                         else:
                             raise ValueError("窗口额度不足，且没有可复用的现有窗口")
+
+                if not isinstance(dir_id, str) or not dir_id:
+                    raise ValueError(f"[{window_name}] 无有效 dirId，无法继续执行")
 
                 # 每次打开前都先随机指纹。
                 random_env_resp = client.browser_random_env(
@@ -654,46 +671,29 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                 }
                 open_resp = client.browser_open(open_payload)
                 print(f"[{window_name}] open_resp:", open_resp)
-                opened_windows.append(
-                    {
-                        "window_name": window_name,
-                        "dir_id": dir_id,
-                        "url": task["url"],
-                        "open_resp": open_resp,
-                    }
-                )
-            except Exception as exc:
-                log_status("任务失败", f"{window_name} 准备/开窗失败，已跳过: {exc}")
-                continue
 
-        # 第二阶段：对本轮已打开的窗口执行加载等待、点击、关窗。
-        for item in opened_windows:
-            window_name = item["window_name"]
-            dir_id = item["dir_id"]
-            target_url = item["url"]
-            open_resp = item["open_resp"]
-
-            try:
                 open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
-                http_endpoint = normalize_http_endpoint(open_data.get("http") if isinstance(open_data, dict) else None)
+                http_endpoint = normalize_http_endpoint(
+                    open_data.get("http") if isinstance(open_data, dict) else None
+                )
                 loaded = False
                 if http_endpoint:
-                    loaded = wait_page_loaded(http_endpoint=http_endpoint, target_url=target_url)
+                    loaded = wait_page_loaded(http_endpoint=http_endpoint, target_url=task["url"])
                     print(f"[{window_name}] page_loaded:", loaded)
                 else:
                     print(f"[{window_name}] page_loaded: False (缺少 http 调试地址)")
 
                 if loaded:
                     sleep_random(WAIT_AFTER_OPEN_RANGE, f"[{window_name}] wait_after_open")
-                    clicked = click_page_once(http_endpoint=http_endpoint, target_url=target_url)
+                    clicked = click_page_once(http_endpoint=http_endpoint, target_url=task["url"])
                     print(f"[{window_name}] clicked:", clicked)
                     sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
                 else:
                     print(f"[{window_name}] 跳过等待与点击：页面未确认加载完成")
             except Exception as exc:
-                log_status("任务失败", f"{window_name} 页面操作失败，已跳过: {exc}")
+                log_status("任务失败", f"{window_name} 执行失败，已跳过: {exc}")
             finally:
-                if AUTO_CLOSE_AFTER_TASK:
+                if AUTO_CLOSE_AFTER_TASK and isinstance(dir_id, str) and dir_id:
                     try:
                         close_resp = client.browser_close(
                             {
@@ -703,7 +703,16 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                         )
                         print(f"[{window_name}] close_resp:", close_resp)
                     except Exception as exc:
-                        log_status("关窗失败", f"{window_name} 关闭失败，将在下一轮继续复用: {exc}")
+                        log_status("关窗失败", f"{window_name} 关闭失败，将在后续任务继续复用: {exc}")
+
+    workers: list[threading.Thread] = []
+    for slot_index in range(effective_window_count):
+        worker = threading.Thread(target=run_slot_tasks, args=(slot_index,), daemon=False)
+        worker.start()
+        workers.append(worker)
+
+    for worker in workers:
+        worker.join()
     log_status("轮次结束", f"第 {cycle_no} 轮执行完成")
 
 
