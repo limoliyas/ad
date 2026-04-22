@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -151,21 +153,52 @@ class ConsoleProgressBoard:
         current_norm = max(0, min(current, total))
         return f"{slot_index + 1}. {window_name} {current_norm}/{total} {status}"
 
+    # 估算字符在终端中的显示宽度，避免中文字符导致光标回退行数不准。
+    def _display_width(self, text: str) -> int:
+        width = 0
+        for ch in text:
+            width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        return width
+
+    # 将文本裁剪到终端可视宽度内，防止自动换行产生重复残影。
+    def _fit_terminal_width(self, text: str) -> str:
+        cols = shutil.get_terminal_size(fallback=(120, 20)).columns
+        max_cols = max(20, cols - 1)
+        if self._display_width(text) <= max_cols:
+            return text
+
+        suffix = "..."
+        suffix_width = self._display_width(suffix)
+        if max_cols <= suffix_width:
+            return suffix[:max_cols]
+
+        keep_width = max_cols - suffix_width
+        output_chars: list[str] = []
+        used = 0
+        for ch in text:
+            ch_width = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+            if used + ch_width > keep_width:
+                break
+            output_chars.append(ch)
+            used += ch_width
+        return "".join(output_chars) + suffix
+
     def _render_locked(self) -> None:
         if not self._lines:
             return
+        fitted_lines = [self._fit_terminal_width(line) for line in self._lines]
         if not self._is_tty:
             if not self._rendered:
-                print("\n".join(self._lines), flush=True)
+                print("\n".join(fitted_lines), flush=True)
                 self._rendered = True
             return
         if not self._rendered:
-            print("\n".join(self._lines), flush=True)
+            print("\n".join(fitted_lines), flush=True)
             self._rendered = True
             return
 
         sys.stdout.write(f"\x1b[{self._line_count}F")
-        for idx, line in enumerate(self._lines):
+        for idx, line in enumerate(fitted_lines):
             sys.stdout.write("\r\x1b[2K")
             sys.stdout.write(line)
             if idx < self._line_count - 1:
