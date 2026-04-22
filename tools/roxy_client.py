@@ -184,6 +184,109 @@ class RoxyClient:
     def browser_mdf(self, data: dict[str, Any]) -> dict[str, Any]:
         return self._post("/browser/mdf", data=data)
 
+    # 按指定尺寸和比例坐标修改窗口布局，并写入窗口配置。
+    def browser_set_window_layout(
+        self,
+        workspace_id: int,
+        dir_id: str,
+        *,
+        width: int = 1000,
+        height: int = 1000,
+        position_x: float = 0.0,
+        position_y: float = 0.0,
+        position_switch: bool = True,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = dict(extra_payload or {})
+        payload["workspaceId"] = workspace_id
+        payload["dirId"] = dir_id
+
+        # 保留外部传入的 fingerInfo 其他字段，只覆盖窗口布局相关项。
+        finger_info_raw = payload.get("fingerInfo", {})
+        finger_info = dict(finger_info_raw) if isinstance(finger_info_raw, dict) else {}
+        finger_info.update(
+            {
+                "openWidth": str(width),
+                "openHeight": str(height),
+                "positionSwitch": position_switch,
+                "windowRatioPosition": f"{position_x:.6g},{position_y:.6g}",
+            }
+        )
+        payload["fingerInfo"] = finger_info
+        return self.browser_mdf(payload)
+
+    # 按网格索引自动计算平铺坐标并修改窗口布局。
+    def browser_tile_window_layout(
+        self,
+        workspace_id: int,
+        dir_id: str,
+        *,
+        slot_index: int,
+        columns: int = 2,
+        rows: int = 2,
+        width: int = 1000,
+        height: int = 1000,
+        start_x: float = 0.0,
+        start_y: float = 0.0,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if columns <= 0 or rows <= 0:
+            raise ValueError("平铺参数错误，columns 和 rows 必须大于 0")
+        if slot_index < 0 or slot_index >= columns * rows:
+            raise ValueError("平铺参数错误，slot_index 超出网格范围")
+
+        col_idx = slot_index % columns
+        row_idx = slot_index // columns
+        x_step = 1.0 / columns
+        y_step = 1.0 / rows
+        position_x = start_x + col_idx * x_step
+        position_y = start_y + row_idx * y_step
+
+        return self.browser_set_window_layout(
+            workspace_id=workspace_id,
+            dir_id=dir_id,
+            width=width,
+            height=height,
+            position_x=position_x,
+            position_y=position_y,
+            position_switch=True,
+            extra_payload=extra_payload,
+        )
+
+    # 根据屏幕宽度自动计算列数并进行平铺布局。
+    def browser_auto_tile_window_layout(
+        self,
+        workspace_id: int,
+        dir_id: str,
+        *,
+        slot_index: int,
+        screen_width: int,
+        width: int = 1000,
+        height: int = 1000,
+        start_x: float = 0.0,
+        start_y: float = 0.0,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if screen_width <= 0:
+            raise ValueError("自动平铺参数错误，screen_width 必须大于 0")
+        if width <= 0 or height <= 0:
+            raise ValueError("自动平铺参数错误，width 和 height 必须大于 0")
+
+        # 至少一列，并按屏幕宽度自动容纳窗口数量。
+        columns = max(1, screen_width // width)
+        return self.browser_tile_window_layout(
+            workspace_id=workspace_id,
+            dir_id=dir_id,
+            slot_index=slot_index,
+            columns=columns,
+            rows=max(1, slot_index // columns + 1),
+            width=width,
+            height=height,
+            start_x=start_x,
+            start_y=start_y,
+            extra_payload=extra_payload,
+        )
+
     # 删除浏览器窗口，对应 POST /browser/delete。
     def browser_delete(self, data: dict[str, Any]) -> dict[str, Any]:
         return self._post("/browser/delete", data=data)

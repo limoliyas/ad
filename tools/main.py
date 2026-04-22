@@ -2,10 +2,14 @@ from tools.roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
 
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
-TARGET_URL = "https://vids.st/v/23670"
+TARGET_URL = "https://vids.st/v/23671"
 PROXY_RAW = "165.154.173.254:4733:G8g3TKqdi7fX:7G6nUjZB1w"
 WORKSPACE_NAME = None
 PROJECT_NAME = None
+WINDOW_WIDTH = 400
+WINDOW_HEIGHT = 400
+TILE_SLOT_INDEX = 0
+SCREEN_WIDTH_OVERRIDE = None
 
 
 # 解析 host:port:username:password 形式的代理字符串。
@@ -64,6 +68,22 @@ def resolve_workspace_project_id(
     return workspace_id, project_id
 
 
+# 自动获取主屏幕宽度，可通过参数覆盖。
+def get_screen_width(override_width: int | None = None) -> int:
+    if isinstance(override_width, int) and override_width > 0:
+        return override_width
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        width = int(root.winfo_screenwidth())
+        root.destroy()
+        return width if width > 0 else 1920
+    except Exception:
+        return 1920
+
+
 PROXY_HOST, PROXY_PORT, PROXY_USERNAME, PROXY_PASSWORD = parse_proxy_raw(PROXY_RAW)
 
 client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
@@ -109,6 +129,19 @@ try:
         "dirId": dir_id,
     })
     print("random_env_resp:", random_env_resp)
+
+    screen_width = get_screen_width(SCREEN_WIDTH_OVERRIDE)
+    print("screen_width:", screen_width)
+
+    layout_resp = client.browser_auto_tile_window_layout(
+        workspace_id=workspace_id,
+        dir_id=dir_id,
+        slot_index=TILE_SLOT_INDEX,
+        screen_width=screen_width,
+        width=WINDOW_WIDTH,
+        height=WINDOW_HEIGHT,
+    )
+    print("layout_resp:", layout_resp)
 
     open_resp = client.browser_open({
         "workspaceId": workspace_id,
