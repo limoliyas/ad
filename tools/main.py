@@ -34,6 +34,12 @@ AUTO_CLOSE_AFTER_TASK = True
 WAIT_AFTER_OPEN_RANGE = (3.0, 6.0)
 # 点击页面后的随机等待区间（秒）。
 WAIT_AFTER_CLICK_RANGE = (20.0, 40.0)
+# 页面加载超时时间（毫秒）。
+PAGE_LOAD_TIMEOUT_MS = 45000
+# 页面加载失败后的最大重载次数（不含首次加载）。
+PAGE_RELOAD_MAX_RETRIES = 2
+# 每次重载前的随机等待区间（秒）。
+PAGE_RELOAD_DELAY_RANGE = (1.0, 2.0)
 # 每一轮目标总时长区间（秒），默认约 3 分钟。
 # 规则：从一轮开始计时，若本轮执行时长小于目标时长则补等待；超过则直接下一轮。
 CYCLE_TARGET_DURATION_RANGE = (170.0, 190.0)
@@ -266,18 +272,31 @@ def wait_page_loaded(http_endpoint: str, target_url: str) -> bool:
                 page = context.pages[0]
             if page is None:
                 page = context.new_page()
-                page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                page.goto(target_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
 
-            page.bring_to_front()
-            page.wait_for_load_state("domcontentloaded", timeout=60000)
-            try:
-                page.wait_for_load_state("load", timeout=60000)
-            except Exception:
-                # 某些页面可能持续流式加载，这里不强制失败。
-                pass
+            max_attempts = PAGE_RELOAD_MAX_RETRIES + 1
+            for attempt in range(max_attempts):
+                attempt_no = attempt + 1
+                try:
+                    page.bring_to_front()
+                    page.wait_for_load_state("domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+                    page.wait_for_load_state("load", timeout=PAGE_LOAD_TIMEOUT_MS)
+                    browser.close()
+                    return True
+                except Exception as exc:
+                    print(f"load_attempt[{attempt_no}/{max_attempts}] failed: {exc}")
+                    if attempt_no >= max_attempts:
+                        break
+                    delay = random.uniform(*PAGE_RELOAD_DELAY_RANGE)
+                    print(f"load_retry_wait: sleep {delay:.2f}s")
+                    time.sleep(delay)
+                    try:
+                        page.reload(wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
+                    except Exception as reload_exc:
+                        print(f"load_retry_reload_failed: {reload_exc}")
 
             browser.close()
-            return True
+            return False
     except Exception as exc:
         print(f"load_wait_failed: {exc}")
         return False
