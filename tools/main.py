@@ -26,6 +26,8 @@ SCREEN_WIDTH_OVERRIDE = None
 WINDOW_NAME_PREFIX = "Auto-Visit-"
 # 是否仅使用已有窗口（不创建新窗口）。
 USE_EXISTING_WINDOWS_ONLY = False
+# 指纹中的时区是否跟随 IP 自动匹配（文档字段: fingerInfo.isTimeZone）。
+TIMEZONE_FOLLOW_IP = True
 # 每个任务完成后是否立即关闭窗口。
 AUTO_CLOSE_AFTER_TASK = False
 # 打开窗口后的随机等待区间（秒）。
@@ -66,6 +68,14 @@ def build_proxy_info(proxy_raw: str) -> dict:
         "proxyUserName": username,
         "proxyPassword": password,
         "checkChannel": "IPRust.io",
+    }
+
+
+# 构建基础指纹配置，避免多个接口修改窗口时字段不一致。
+def build_finger_info_base() -> dict:
+    return {
+        "syncTab": False,
+        "isTimeZone": TIMEZONE_FOLLOW_IP,
     }
 
 
@@ -401,7 +411,7 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                         "windowName": window_name,
                         "defaultOpenUrl": [task["url"]],
                         "proxyInfo": proxy_info,
-                        "fingerInfo": {"syncTab": False},
+                        "fingerInfo": build_finger_info_base(),
                     }
                 )
                 print(f"[{window_name}] mdf_resp:", mdf_resp)
@@ -417,7 +427,7 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                             "windowName": window_name,
                             "defaultOpenUrl": [task["url"]],
                             "proxyInfo": proxy_info,
-                            "fingerInfo": {"syncTab": False},
+                            "fingerInfo": build_finger_info_base(),
                         }
                     )
                     dir_id = extract_dir_id(create_resp)
@@ -451,6 +461,7 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                 screen_width=screen_width,
                 width=WINDOW_WIDTH,
                 height=WINDOW_HEIGHT,
+                extra_payload={"fingerInfo": build_finger_info_base()},
             )
             print(f"[{window_name}] layout_resp:", layout_resp)
 
