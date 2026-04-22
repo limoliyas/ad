@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import random
+import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 try:
@@ -57,6 +59,14 @@ CLICK_RATIO_Y = 0.4
 CLEAR_LOCAL_CACHE_BEFORE_OPEN = True
 # 每轮打开前是否清理服务器缓存，进一步避免历史标签页回灌。
 CLEAR_SERVER_CACHE_BEFORE_OPEN = True
+# Playwright 页面操作是否放到子进程执行，避免主进程因底层崩溃退出。
+PLAYWRIGHT_IN_SUBPROCESS = True
+# 子进程页面操作超时时间（秒）。
+PLAYWRIGHT_ACTION_TIMEOUT_SEC = 120
+# 发生未知异常后的兜底等待区间（秒），避免异常风暴打满 CPU。
+FATAL_BACKOFF_RANGE = (3.0, 8.0)
+# 是否忽略 Ctrl+C，忽略后程序不会退出，会继续下一轮。
+IGNORE_KEYBOARD_INTERRUPT = True
 
 
 # 输出统一中文状态日志，便于观察任务进度。
@@ -65,19 +75,41 @@ def log_status(stage: str, message: str) -> None:
     print(f"[{now}][{stage}] {message}")
 
 
+# 解析命令行参数：支持 token 与子进程动作参数。
+def parse_cli_args(argv: list[str]) -> tuple[str | None, str | None, str | None, str | None]:
+    token: str | None = None
+    worker_action: str | None = None
+    worker_http: str | None = None
+    worker_url: str | None = None
+    idx = 1
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--worker-action" and idx + 1 < len(argv):
+            worker_action = argv[idx + 1]
+            idx += 2
+            continue
+        if arg == "--worker-http" and idx + 1 < len(argv):
+            worker_http = argv[idx + 1]
+            idx += 2
+            continue
+        if arg == "--worker-url" and idx + 1 < len(argv):
+            worker_url = argv[idx + 1]
+            idx += 2
+            continue
+        if not arg.startswith("--") and token is None:
+            token = arg.strip()
+            idx += 1
+            continue
+        idx += 1
+    return token, worker_action, worker_http, worker_url
+
+
 # 生成 open 接口参数，按开关启用无头模式。
 def build_open_args() -> list[str]:
     args: list[str] = []
     if HEADLESS_MODE:
         args.append("--headless=new")
     return args
-
-
-# 优先使用命令行传入 token，未传时回退到配置常量。
-def resolve_runtime_token(default_token: str) -> str:
-    if len(sys.argv) >= 2 and sys.argv[1].strip():
-        return sys.argv[1].strip()
-    return default_token
 
 
 # 解析 host:port:username:password 形式的代理字符串。
@@ -273,12 +305,52 @@ def normalize_http_endpoint(http_value: Any) -> str | None:
     return f"http://{http_value}"
 
 
-# 等待目标页面加载完成（domcontentloaded + load）。
-def wait_page_loaded(http_endpoint: str, target_url: str) -> bool:
+# 在子进程执行页面动作，避免主进程受 Playwright 崩溃影响。
+def run_playwright_action_in_subprocess(action: str, http_endpoint: str, target_url: str) -> bool:
+    cmd = [
+        sys.executable,
+        "-u",
+        str(Path(__file__).resolve()),
+        "--worker-action",
+        action,
+        "--worker-http",
+        http_endpoint,
+        "--worker-url",
+        target_url,
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=PLAYWRIGHT_ACTION_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        log_status("子进程超时", f"{action} 超时 {PLAYWRIGHT_ACTION_TIMEOUT_SEC}s，判定失败")
+        return False
+    except Exception as exc:
+        log_status("子进程失败", f"{action} 启动异常: {exc}")
+        return False
+
+    if result.returncode == 0:
+        return True
+
+    output = (result.stdout or "").strip()
+    error = (result.stderr or "").strip()
+    if output:
+        log_status("子进程输出", output[-300:])
+    if error:
+        log_status("子进程错误", error[-300:])
+    log_status("子进程退出", f"{action} returncode={result.returncode}")
+    return False
+
+
+# 在当前进程中等待目标页面加载完成（domcontentloaded + load）。
+def wait_page_loaded_local(http_endpoint: str, target_url: str) -> bool:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:
-        print(f"load_wait_skip: Playwright 不可用: {exc}")
+        log_status("加载跳过", f"Playwright 不可用: {exc}")
         return False
 
     try:
@@ -312,30 +384,30 @@ def wait_page_loaded(http_endpoint: str, target_url: str) -> bool:
                     browser.close()
                     return True
                 except Exception as exc:
-                    print(f"load_attempt[{attempt_no}/{max_attempts}] failed: {exc}")
+                    log_status("加载重试", f"第 {attempt_no}/{max_attempts} 次失败: {exc}")
                     if attempt_no >= max_attempts:
                         break
                     delay = random.uniform(*PAGE_RELOAD_DELAY_RANGE)
-                    print(f"load_retry_wait: sleep {delay:.2f}s")
+                    log_status("加载重试", f"重载前等待 {delay:.2f}s")
                     time.sleep(delay)
                     try:
                         page.reload(wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
                     except Exception as reload_exc:
-                        print(f"load_retry_reload_failed: {reload_exc}")
+                        log_status("加载重试", f"重载失败: {reload_exc}")
 
             browser.close()
             return False
     except Exception as exc:
-        print(f"load_wait_failed: {exc}")
+        log_status("加载失败", str(exc))
         return False
 
 
-# 在已打开页面中心执行一次点击。
-def click_page_once(http_endpoint: str, target_url: str) -> bool:
+# 在当前进程中执行一次点击。
+def click_page_once_local(http_endpoint: str, target_url: str) -> bool:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:
-        print(f"click_skip: Playwright 不可用: {exc}")
+        log_status("点击跳过", f"Playwright 不可用: {exc}")
         return False
 
     try:
@@ -365,8 +437,22 @@ def click_page_once(http_endpoint: str, target_url: str) -> bool:
             browser.close()
             return True
     except Exception as exc:
-        print(f"click_failed: {exc}")
+        log_status("点击失败", str(exc))
         return False
+
+
+# 等待目标页面加载完成（可选子进程隔离）。
+def wait_page_loaded(http_endpoint: str, target_url: str) -> bool:
+    if PLAYWRIGHT_IN_SUBPROCESS:
+        return run_playwright_action_in_subprocess("wait_loaded", http_endpoint, target_url)
+    return wait_page_loaded_local(http_endpoint, target_url)
+
+
+# 在已打开页面中心执行一次点击（可选子进程隔离）。
+def click_page_once(http_endpoint: str, target_url: str) -> bool:
+    if PLAYWRIGHT_IN_SUBPROCESS:
+        return run_playwright_action_in_subprocess("click_once", http_endpoint, target_url)
+    return click_page_once_local(http_endpoint, target_url)
 
 
 # 在区间内随机等待。
@@ -378,6 +464,19 @@ def sleep_random(wait_range: tuple[float, float], label: str) -> float:
     print(f"{label}: sleep {duration:.2f}s")
     time.sleep(duration)
     return duration
+
+
+# 子进程入口：执行单个 Playwright 动作并返回退出码。
+def run_worker_action(action: str, http_endpoint: str, target_url: str) -> int:
+    if not http_endpoint or not target_url:
+        log_status("子进程参数错误", "缺少 http_endpoint 或 target_url")
+        return 2
+    if action == "wait_loaded":
+        return 0 if wait_page_loaded_local(http_endpoint, target_url) else 3
+    if action == "click_once":
+        return 0 if click_page_once_local(http_endpoint, target_url) else 4
+    log_status("子进程参数错误", f"未知动作: {action}")
+    return 2
 
 
 def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
@@ -392,8 +491,9 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
         )
     effective_window_count = min(WINDOW_COUNT, len(tasks))
     if effective_window_count < WINDOW_COUNT:
-        print(
-            f"提示: 当前组合任务数仅 {len(tasks)}，因此本轮最多只会使用 {effective_window_count} 个窗口槽位"
+        log_status(
+            "窗口提示",
+            f"组合任务数仅 {len(tasks)}，本轮最多使用 {effective_window_count} 个窗口槽位",
         )
 
     workspace_resp = client.browser_workspace({"page_index": 1, "page_size": 100})
@@ -441,103 +541,107 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
             slot_index = offset
             slot = slots[slot_index]
             window_name = slot["window_name"]
-            proxy_info = build_proxy_info(task["proxy_raw"])
-            dir_id = slot["dir_id"]
+            try:
+                proxy_info = build_proxy_info(task["proxy_raw"])
+                dir_id = slot["dir_id"]
 
-            log_status(
-                "任务开始",
-                f"task[{task_idx + 1}/{len(tasks)}] round={round_index} slot={slot_index + 1} "
-                f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}",
-            )
-
-            if dir_id:
-                # 窗口已存在：更新该窗口的代理和目标 URL。
-                mdf_resp = client.browser_mdf(
-                    {
-                        "workspaceId": workspace_id,
-                        "projectId": project_id,
-                        "dirId": dir_id,
-                        "windowName": window_name,
-                        "defaultOpenUrl": [task["url"]],
-                        "proxyInfo": proxy_info,
-                        "fingerInfo": build_finger_info_base(),
-                    }
+                log_status(
+                    "任务开始",
+                    f"task[{task_idx + 1}/{len(tasks)}] round={round_index} slot={slot_index + 1} "
+                    f"url_idx={task['url_index'] + 1} proxy_idx={task['proxy_index'] + 1}",
                 )
-                print(f"[{window_name}] mdf_resp:", mdf_resp)
-            else:
-                # 槽位无可用窗口时尝试创建；若额度不足则降级复用剩余已有窗口。
-                if USE_EXISTING_WINDOWS_ONLY:
-                    raise ValueError(f"[{window_name}] 未找到可复用窗口，且已禁用创建新窗口")
-                try:
-                    create_resp = client.browser_create(
+
+                if dir_id:
+                    # 窗口已存在：更新该窗口的代理和目标 URL。
+                    mdf_resp = client.browser_mdf(
                         {
                             "workspaceId": workspace_id,
                             "projectId": project_id,
+                            "dirId": dir_id,
                             "windowName": window_name,
                             "defaultOpenUrl": [task["url"]],
                             "proxyInfo": proxy_info,
                             "fingerInfo": build_finger_info_base(),
                         }
                     )
-                    dir_id = extract_dir_id(create_resp)
-                    slot["dir_id"] = dir_id
-                    window_name_map[window_name] = dir_id
-                    print(f"[{window_name}] create_resp:", create_resp)
-                except RoxyAPIError as exc:
-                    if exc.code != 409:
-                        raise
-                    if reusable_existing_ids:
-                        dir_id = reusable_existing_ids.pop(0)
+                    print(f"[{window_name}] mdf_resp:", mdf_resp)
+                else:
+                    # 槽位无可用窗口时尝试创建；若额度不足则降级复用剩余已有窗口。
+                    if USE_EXISTING_WINDOWS_ONLY:
+                        raise ValueError(f"[{window_name}] 未找到可复用窗口，且已禁用创建新窗口")
+                    try:
+                        create_resp = client.browser_create(
+                            {
+                                "workspaceId": workspace_id,
+                                "projectId": project_id,
+                                "windowName": window_name,
+                                "defaultOpenUrl": [task["url"]],
+                                "proxyInfo": proxy_info,
+                                "fingerInfo": build_finger_info_base(),
+                            }
+                        )
+                        dir_id = extract_dir_id(create_resp)
                         slot["dir_id"] = dir_id
-                        print(f"[{window_name}] create_skip_409: 额度不足，改用现有窗口 {dir_id}")
-                    else:
-                        raise ValueError("窗口额度不足，且没有可复用的现有窗口")
+                        window_name_map[window_name] = dir_id
+                        print(f"[{window_name}] create_resp:", create_resp)
+                    except RoxyAPIError as exc:
+                        if exc.code != 409:
+                            raise
+                        if reusable_existing_ids:
+                            dir_id = reusable_existing_ids.pop(0)
+                            slot["dir_id"] = dir_id
+                            print(f"[{window_name}] create_skip_409: 额度不足，改用现有窗口 {dir_id}")
+                        else:
+                            raise ValueError("窗口额度不足，且没有可复用的现有窗口")
 
-            # 每次打开前都先随机指纹。
-            random_env_resp = client.browser_random_env(
-                {
+                # 每次打开前都先随机指纹。
+                random_env_resp = client.browser_random_env(
+                    {
+                        "workspaceId": workspace_id,
+                        "dirId": dir_id,
+                    }
+                )
+                print(f"[{window_name}] random_env_resp:", random_env_resp)
+
+                # 自动按屏幕宽度平铺窗口位置与大小。
+                layout_resp = client.browser_auto_tile_window_layout(
+                    workspace_id=workspace_id,
+                    dir_id=dir_id,
+                    slot_index=slot_index,
+                    screen_width=screen_width,
+                    width=WINDOW_WIDTH,
+                    height=WINDOW_HEIGHT,
+                    extra_payload={"fingerInfo": build_finger_info_base()},
+                )
+                print(f"[{window_name}] layout_resp:", layout_resp)
+
+                if CLEAR_LOCAL_CACHE_BEFORE_OPEN:
+                    clear_local_resp = client.browser_clear_local_cache({"dirIds": [dir_id]})
+                    print(f"[{window_name}] clear_local_resp:", clear_local_resp)
+                if CLEAR_SERVER_CACHE_BEFORE_OPEN:
+                    clear_server_resp = client.browser_clear_server_cache(
+                        {"workspaceId": workspace_id, "dirIds": [dir_id]}
+                    )
+                    print(f"[{window_name}] clear_server_resp:", clear_server_resp)
+
+                open_payload = {
                     "workspaceId": workspace_id,
                     "dirId": dir_id,
+                    "args": build_open_args(),
                 }
-            )
-            print(f"[{window_name}] random_env_resp:", random_env_resp)
-
-            # 自动按屏幕宽度平铺窗口位置与大小。
-            layout_resp = client.browser_auto_tile_window_layout(
-                workspace_id=workspace_id,
-                dir_id=dir_id,
-                slot_index=slot_index,
-                screen_width=screen_width,
-                width=WINDOW_WIDTH,
-                height=WINDOW_HEIGHT,
-                extra_payload={"fingerInfo": build_finger_info_base()},
-            )
-            print(f"[{window_name}] layout_resp:", layout_resp)
-
-            if CLEAR_LOCAL_CACHE_BEFORE_OPEN:
-                clear_local_resp = client.browser_clear_local_cache({"dirIds": [dir_id]})
-                print(f"[{window_name}] clear_local_resp:", clear_local_resp)
-            if CLEAR_SERVER_CACHE_BEFORE_OPEN:
-                clear_server_resp = client.browser_clear_server_cache(
-                    {"workspaceId": workspace_id, "dirIds": [dir_id]}
+                open_resp = client.browser_open(open_payload)
+                print(f"[{window_name}] open_resp:", open_resp)
+                opened_windows.append(
+                    {
+                        "window_name": window_name,
+                        "dir_id": dir_id,
+                        "url": task["url"],
+                        "open_resp": open_resp,
+                    }
                 )
-                print(f"[{window_name}] clear_server_resp:", clear_server_resp)
-
-            open_payload = {
-                "workspaceId": workspace_id,
-                "dirId": dir_id,
-                "args": build_open_args(),
-            }
-            open_resp = client.browser_open(open_payload)
-            print(f"[{window_name}] open_resp:", open_resp)
-            opened_windows.append(
-                {
-                    "window_name": window_name,
-                    "dir_id": dir_id,
-                    "url": task["url"],
-                    "open_resp": open_resp,
-                }
-            )
+            except Exception as exc:
+                log_status("任务失败", f"{window_name} 准备/开窗失败，已跳过: {exc}")
+                continue
 
         # 第二阶段：对本轮已打开的窗口执行加载等待、点击、关窗。
         for item in opened_windows:
@@ -563,15 +667,20 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
                     sleep_random(WAIT_AFTER_CLICK_RANGE, f"[{window_name}] wait_after_click")
                 else:
                     print(f"[{window_name}] 跳过等待与点击：页面未确认加载完成")
+            except Exception as exc:
+                log_status("任务失败", f"{window_name} 页面操作失败，已跳过: {exc}")
             finally:
                 if AUTO_CLOSE_AFTER_TASK:
-                    close_resp = client.browser_close(
-                        {
-                            "workspaceId": workspace_id,
-                            "dirId": dir_id,
-                        }
-                    )
-                    print(f"[{window_name}] close_resp:", close_resp)
+                    try:
+                        close_resp = client.browser_close(
+                            {
+                                "workspaceId": workspace_id,
+                                "dirId": dir_id,
+                            }
+                        )
+                        print(f"[{window_name}] close_resp:", close_resp)
+                    except Exception as exc:
+                        log_status("关窗失败", f"{window_name} 关闭失败，将在下一轮继续复用: {exc}")
     log_status("轮次结束", f"第 {cycle_no} 轮执行完成")
 
 
