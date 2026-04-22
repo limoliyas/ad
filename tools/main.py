@@ -20,7 +20,7 @@ PROXY_RAWS = [
 WINDOW_COUNT = 2
 WORKSPACE_NAME = None
 PROJECT_NAME = None
-WINDOW_WIDTH = 400
+WINDOW_WIDTH = 600
 WINDOW_HEIGHT = 400
 SCREEN_WIDTH_OVERRIDE = None
 WINDOW_NAME_PREFIX = "Auto-Visit-"
@@ -29,13 +29,14 @@ USE_EXISTING_WINDOWS_ONLY = False
 # 指纹中的时区是否跟随 IP 自动匹配（文档字段: fingerInfo.isTimeZone）。
 TIMEZONE_FOLLOW_IP = True
 # 每个任务完成后是否立即关闭窗口。
-AUTO_CLOSE_AFTER_TASK = False
+AUTO_CLOSE_AFTER_TASK = True
 # 打开窗口后的随机等待区间（秒）。
 WAIT_AFTER_OPEN_RANGE = (3.0, 6.0)
 # 点击页面后的随机等待区间（秒）。
-WAIT_AFTER_CLICK_RANGE = (2.0, 4.0)
-# 每一轮全部任务执行完成后的随机延迟区间（秒）。
-CYCLE_DELAY_RANGE = (10.0, 20.0)
+WAIT_AFTER_CLICK_RANGE = (20.0, 40.0)
+# 每一轮目标总时长区间（秒），默认约 3 分钟。
+# 规则：从一轮开始计时，若本轮执行时长小于目标时长则补等待；超过则直接下一轮。
+CYCLE_TARGET_DURATION_RANGE = (170.0, 190.0)
 # 点击时优先使用页面中心，避免点到无效区域。
 CLICK_RATIO_X = 0.3
 CLICK_RATIO_Y = 0.4
@@ -530,11 +531,25 @@ client = RoxyClient(token=TOKEN, port=PORT, timeout=120)
 cycle_no = 1
 try:
     while True:
+        cycle_start_at = time.monotonic()
+        cycle_target = random.uniform(*CYCLE_TARGET_DURATION_RANGE)
         try:
             run_one_cycle(client, cycle_no)
         except (RoxyAPIError, RoxyClientError, ValueError) as e:
             print(f"cycle {cycle_no} 失败:", e)
-        sleep_random(CYCLE_DELAY_RANGE, f"cycle {cycle_no} delay_before_next")
+        cycle_elapsed = time.monotonic() - cycle_start_at
+        remain = cycle_target - cycle_elapsed
+        if remain > 0:
+            print(
+                f"cycle {cycle_no} 节奏控制: 已运行 {cycle_elapsed:.2f}s, "
+                f"目标 {cycle_target:.2f}s, 补等待 {remain:.2f}s"
+            )
+            time.sleep(remain)
+        else:
+            print(
+                f"cycle {cycle_no} 节奏控制: 已运行 {cycle_elapsed:.2f}s, "
+                f"超过目标 {cycle_target:.2f}s, 直接开始下一轮"
+            )
         cycle_no += 1
 except KeyboardInterrupt:
     print("收到中断信号，停止循环")
