@@ -16,8 +16,8 @@ except ModuleNotFoundError:
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
 TARGET_URLS = [
-    "https://vids.st/v/23803",
-    "https://vids.st/v/23812",
+    "https://vids.st/e/23803",
+    "https://vids.st/e/23812",
 ]
 PROXY_RAWS = [
     "165.154.173.254:4733:G8g3TKqdi7fX:7G6nUjZB1w",
@@ -684,36 +684,53 @@ def run_one_cycle(client: RoxyClient, cycle_no: int) -> None:
     log_status("轮次结束", f"第 {cycle_no} 轮执行完成")
 
 
-runtime_token = resolve_runtime_token(TOKEN)
-token_source = "命令行参数" if runtime_token != TOKEN else "默认配置"
-log_status("启动配置", f"token 来源: {token_source}")
-client = RoxyClient(token=runtime_token, port=PORT, timeout=120)
-cycle_no = 1
-try:
-    while True:
-        cycle_start_at = time.monotonic()
-        cycle_target = random.uniform(*CYCLE_TARGET_DURATION_RANGE)
-        try:
-            run_one_cycle(client, cycle_no)
-        except (RoxyAPIError, RoxyClientError, ValueError) as e:
-            log_status("轮次失败", f"cycle {cycle_no} 失败: {e}")
-        cycle_elapsed = time.monotonic() - cycle_start_at
-        remain = cycle_target - cycle_elapsed
-        if remain > 0:
-            log_status(
-                "节奏控制",
-                f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
-                f"目标 {cycle_target:.2f}s, 补等待 {remain:.2f}s",
-            )
-            time.sleep(remain)
-        else:
-            log_status(
-                "节奏控制",
-                f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
-                f"超过目标 {cycle_target:.2f}s, 直接开始下一轮",
-            )
-        cycle_no += 1
-except KeyboardInterrupt:
-    log_status("停止运行", "收到中断信号，停止循环")
-finally:
-    client.close()
+def main() -> None:
+    token_arg, worker_action, worker_http, worker_url = parse_cli_args(sys.argv)
+    if worker_action:
+        exit_code = run_worker_action(worker_action, worker_http or "", worker_url or "")
+        raise SystemExit(exit_code)
+
+    runtime_token = token_arg or TOKEN
+    token_source = "命令行参数" if token_arg else "默认配置"
+    log_status("启动配置", f"token 来源: {token_source}")
+    client = RoxyClient(token=runtime_token, port=PORT, timeout=120)
+    cycle_no = 1
+    try:
+        while True:
+            cycle_start_at = time.monotonic()
+            cycle_target = random.uniform(*CYCLE_TARGET_DURATION_RANGE)
+            try:
+                run_one_cycle(client, cycle_no)
+            except KeyboardInterrupt:
+                if IGNORE_KEYBOARD_INTERRUPT:
+                    log_status("中断忽略", "收到 Ctrl+C，按配置忽略并继续循环")
+                else:
+                    raise
+            except Exception as exc:
+                log_status("轮次失败", f"cycle {cycle_no} 异常: {exc}")
+                backoff = random.uniform(*FATAL_BACKOFF_RANGE)
+                log_status("异常退避", f"等待 {backoff:.2f}s 后继续下一轮")
+                time.sleep(backoff)
+
+            cycle_elapsed = time.monotonic() - cycle_start_at
+            remain = cycle_target - cycle_elapsed
+            if remain > 0:
+                log_status(
+                    "节奏控制",
+                    f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
+                    f"目标 {cycle_target:.2f}s, 补等待 {remain:.2f}s",
+                )
+                time.sleep(remain)
+            else:
+                log_status(
+                    "节奏控制",
+                    f"cycle {cycle_no}: 已运行 {cycle_elapsed:.2f}s, "
+                    f"超过目标 {cycle_target:.2f}s, 直接开始下一轮",
+                )
+            cycle_no += 1
+    finally:
+        client.close()
+
+
+if __name__ == "__main__":
+    main()
