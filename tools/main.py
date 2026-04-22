@@ -16,18 +16,18 @@ except ModuleNotFoundError:
 
 TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
 PORT = 50000
-# TARGET_URLS = [
-#     "https://vids.st/v/23947",
-#     "https://vids.st/v/23946",
-#     "https://vids.st/v/23943",
-#     "https://vids.st/v/23942",
-#     "https://vids.st/v/23940",
-#     "https://vids.st/v/23937",
-#     "https://vids.st/v/23935",
-#     "https://vids.st/v/23931",
-# ]
+TARGET_URLS = [
+    "https://vids.st/v/23947",
+    "https://vids.st/v/23946",
+    "https://vids.st/v/23943",
+    "https://vids.st/v/23942",
+    "https://vids.st/v/23940",
+    "https://vids.st/v/23937",
+    "https://vids.st/v/23935",
+    "https://vids.st/v/23931",
+]
 
-TARGET_URLS = ["https://calculator.ccwu.cc/article.html?id=0&lang=en","https://calculator.ccwu.cc/article.html?id=1&lang=en","https://calculator.ccwu.cc/article.html?id=2&lang=en","https://calculator.ccwu.cc/article.html?id=3&lang=en","https://calculator.ccwu.cc/article.html?id=4&lang=en","https://calculator.ccwu.cc/article.html?id=5&lang=en","https://calculator.ccwu.cc/article.html?id=6&lang=en","https://calculator.ccwu.cc/article.html?id=7&lang=en","https://calculator.ccwu.cc/article.html?id=8&lang=en","https://calculator.ccwu.cc/article.html?id=9&lang=en","https://calculator.ccwu.cc/article.html?id=10&lang=en","https://calculator.ccwu.cc/article.html?id=11&lang=en"]
+# TARGET_URLS = ["https://calculator.ccwu.cc/article.html?id=0&lang=en","https://calculator.ccwu.cc/article.html?id=1&lang=en","https://calculator.ccwu.cc/article.html?id=2&lang=en","https://calculator.ccwu.cc/article.html?id=3&lang=en","https://calculator.ccwu.cc/article.html?id=4&lang=en","https://calculator.ccwu.cc/article.html?id=5&lang=en","https://calculator.ccwu.cc/article.html?id=6&lang=en","https://calculator.ccwu.cc/article.html?id=7&lang=en","https://calculator.ccwu.cc/article.html?id=8&lang=en","https://calculator.ccwu.cc/article.html?id=9&lang=en","https://calculator.ccwu.cc/article.html?id=10&lang=en","https://calculator.ccwu.cc/article.html?id=11&lang=en"]
 PROXY_RAWS = [
     "proxy.veproxy.com:10000:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
     "proxy.veproxy.com:10001:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
