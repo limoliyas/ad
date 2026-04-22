@@ -1,0 +1,95 @@
+{
+  "__comment_00": "说明：这是示例配置。实际运行时请复制为 tools/runtime_config.json 并填写真实值。",
+  "__comment_01": "说明：JSON 本身不支持注释，这里使用 __comment_xx 字段承载中文注释。程序会忽略这些字段。",
+  "__comment_02": "说明：所有时间单位默认是秒，除非字段名包含 _ms（毫秒）。",
+
+  "__comment_token": "Roxy API Token。可留空并通过命令行参数传入：python tools/main.py <token>",
+  "token": "请填写你的 token",
+
+  "__comment_port": "Roxy 本地端口。通常保持默认 50000。",
+  "port": 50000,
+
+  "__comment_target_urls": "目标 URL 列表。当前逻辑：URL 数量>=4 时，每个窗口随机处理 3 或 4 个；<4 时每个窗口全处理。",
+  "target_urls": [
+    "https://example.com/page-1",
+    "https://example.com/page-2"
+  ],
+
+  "__comment_proxy_raws": "代理列表，格式固定：host:port:username:password。每个窗口会绑定到一个代理槽位。",
+  "proxy_raws": [
+    "host:port:username:password"
+  ],
+
+  "__comment_window_count": "窗口数量。建议 <= proxy_raws 数量；若超出会报错。",
+  "window_count": 5,
+
+  "__comment_workspace_name": "可选。指定空间名称；为 null 时默认取第一个空间。",
+  "workspace_name": null,
+
+  "__comment_project_name": "可选。指定项目名称；为 null 时默认取该空间第一个项目。",
+  "project_name": null,
+
+  "__comment_window_width": "单个窗口宽度（像素）。",
+  "window_width": 600,
+  "__comment_window_height": "单个窗口高度（像素）。",
+  "window_height": 400,
+
+  "__comment_screen_width_override": "可选。手动覆盖屏幕宽度用于平铺；null 表示自动检测。",
+  "screen_width_override": null,
+
+  "__comment_window_name_prefix": "窗口名前缀，实际名称如 Auto-Visit-1、Auto-Visit-2。",
+  "window_name_prefix": "Auto-Visit-",
+
+  "__comment_headless_mode": "是否无头模式打开窗口。true=无头；false=可见窗口。",
+  "headless_mode": true,
+
+  "__comment_use_existing_windows_only": "是否只复用现有窗口。true 时禁止新建窗口，找不到可复用窗口会报错。",
+  "use_existing_windows_only": false,
+
+  "__comment_timezone_follow_ip": "指纹时区是否跟随 IP（fingerInfo.isTimeZone）。",
+  "timezone_follow_ip": true,
+
+  "__comment_auto_close_after_task": "每个任务结束后是否立即关窗。建议 true，避免标签页累积。",
+  "auto_close_after_task": true,
+
+  "__comment_wait_after_open_range": "页面加载成功后，点击前的随机等待区间 [最小值, 最大值]。",
+  "wait_after_open_range": [3.0, 6.0],
+
+  "__comment_wait_after_click_range": "点击后额外停留的随机等待区间 [最小值, 最大值]。",
+  "wait_after_click_range": [20.0, 40.0],
+
+  "__comment_page_load_timeout_ms": "单次页面加载超时时间（毫秒）。",
+  "page_load_timeout_ms": 45000,
+
+  "__comment_page_reload_max_retries": "页面加载失败后的最大重载次数（不含首次加载）。",
+  "page_reload_max_retries": 2,
+
+  "__comment_page_reload_delay_range": "每次重载前的随机等待区间 [最小值, 最大值]。",
+  "page_reload_delay_range": [1.0, 2.0],
+
+  "__comment_cycle_target_duration_range": "每轮目标时长区间 [最小值, 最大值]。轮次执行短于目标会补等待，长于目标直接下一轮。",
+  "cycle_target_duration_range": [60.0, 70.0],
+
+  "__comment_click_ratio_x": "点击横坐标比例（相对视口宽度，范围 0~1）。",
+  "click_ratio_x": 0.3,
+  "__comment_click_ratio_y": "点击纵坐标比例（相对视口高度，范围 0~1）。",
+  "click_ratio_y": 0.4,
+
+  "__comment_clear_local_cache_before_open": "开窗前是否清理本地缓存，减少历史标签页干扰。",
+  "clear_local_cache_before_open": true,
+
+  "__comment_clear_server_cache_before_open": "开窗前是否清理服务端缓存，进一步降低历史状态回灌。",
+  "clear_server_cache_before_open": true,
+
+  "__comment_playwright_in_subprocess": "页面加载/点击是否在子进程执行。建议 true，隔离 Playwright 异常。",
+  "playwright_in_subprocess": true,
+
+  "__comment_playwright_action_timeout_sec": "子进程页面动作总超时（秒）。",
+  "playwright_action_timeout_sec": 120,
+
+  "__comment_fatal_backoff_range": "出现未知异常后的退避等待区间 [最小值, 最大值]。",
+  "fatal_backoff_range": [3.0, 8.0],
+
+  "__comment_ignore_keyboard_interrupt": "是否忽略 Ctrl+C。true=忽略并继续轮询；false=中断退出。",
+  "ignore_keyboard_interrupt": true
+}

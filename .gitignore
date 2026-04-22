@@ -7,3 +7,8 @@
 .venv
 *.swp
 *.swo
+__pycache__/
+*.pyc
+
+# 本地运行配置（不入库）
+tools/runtime_config.json

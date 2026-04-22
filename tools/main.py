@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import subprocess
 import sys
@@ -14,71 +15,107 @@ except ModuleNotFoundError:
     # 兼容在 tools 目录下直接执行：python main.py <token>
     from roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
 
-TOKEN = "af28a5799bd369b50cdae3dcf085ddfa"
-PORT = 50000
-TARGET_URLS = [
-    "https://vids.st/v/23947",
-    "https://vids.st/v/23946",
-    "https://vids.st/v/23943",
-    "https://vids.st/v/23942",
-    "https://vids.st/v/23940",
-    "https://vids.st/v/23937",
-    "https://vids.st/v/23935",
-    "https://vids.st/v/23931",
-]
+DEFAULT_CONFIG: dict[str, Any] = {
+    "token": "",
+    "port": 50000,
+    "target_urls": [],
+    "proxy_raws": [],
+    "window_count": 5,
+    "workspace_name": None,
+    "project_name": None,
+    "window_width": 600,
+    "window_height": 400,
+    "screen_width_override": None,
+    "window_name_prefix": "Auto-Visit-",
+    "headless_mode": True,
+    "use_existing_windows_only": False,
+    "timezone_follow_ip": True,
+    "auto_close_after_task": True,
+    "wait_after_open_range": [3.0, 6.0],
+    "wait_after_click_range": [20.0, 40.0],
+    "page_load_timeout_ms": 45000,
+    "page_reload_max_retries": 2,
+    "page_reload_delay_range": [1.0, 2.0],
+    "cycle_target_duration_range": [60.0, 70.0],
+    "click_ratio_x": 0.3,
+    "click_ratio_y": 0.4,
+    "clear_local_cache_before_open": True,
+    "clear_server_cache_before_open": True,
+    "playwright_in_subprocess": True,
+    "playwright_action_timeout_sec": 120,
+    "fatal_backoff_range": [3.0, 8.0],
+    "ignore_keyboard_interrupt": True,
+}
 
-# TARGET_URLS = ["https://calculator.ccwu.cc/article.html?id=0&lang=en","https://calculator.ccwu.cc/article.html?id=1&lang=en","https://calculator.ccwu.cc/article.html?id=2&lang=en","https://calculator.ccwu.cc/article.html?id=3&lang=en","https://calculator.ccwu.cc/article.html?id=4&lang=en","https://calculator.ccwu.cc/article.html?id=5&lang=en","https://calculator.ccwu.cc/article.html?id=6&lang=en","https://calculator.ccwu.cc/article.html?id=7&lang=en","https://calculator.ccwu.cc/article.html?id=8&lang=en","https://calculator.ccwu.cc/article.html?id=9&lang=en","https://calculator.ccwu.cc/article.html?id=10&lang=en","https://calculator.ccwu.cc/article.html?id=11&lang=en"]
-PROXY_RAWS = [
-    "proxy.veproxy.com:10000:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
-    "proxy.veproxy.com:10001:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
-    "proxy.veproxy.com:10002:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
-    "proxy.veproxy.com:10003:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
-    "proxy.veproxy.com:10004:res_4_lp_842_w65f:ef7ed145-a545-ad83-472e-97662e09db12",
-]
-# 窗口槽位数量：槽位少会自动多轮执行，直到所有 URL+代理 组合都跑完。
-WINDOW_COUNT = 5
-WORKSPACE_NAME = None
-PROJECT_NAME = None
-WINDOW_WIDTH = 600
-WINDOW_HEIGHT = 400
-SCREEN_WIDTH_OVERRIDE = None
-WINDOW_NAME_PREFIX = "Auto-Visit-"
-# 是否启用无头模式打开浏览器窗口（通过 browser_open 的 args 注入）。
-HEADLESS_MODE = True
-# 是否仅使用已有窗口（不创建新窗口）。
-USE_EXISTING_WINDOWS_ONLY = False
-# 指纹中的时区是否跟随 IP 自动匹配（文档字段: fingerInfo.isTimeZone）。
-TIMEZONE_FOLLOW_IP = True
-# 每个任务完成后是否立即关闭窗口。
-AUTO_CLOSE_AFTER_TASK = True
-# 打开窗口后的随机等待区间（秒）。
-WAIT_AFTER_OPEN_RANGE = (3.0, 6.0)
-# 点击页面后的随机等待区间（秒）。
-WAIT_AFTER_CLICK_RANGE = (20.0, 40.0)
-# 页面加载超时时间（毫秒）。
-PAGE_LOAD_TIMEOUT_MS = 45000
-# 页面加载失败后的最大重载次数（不含首次加载）。
-PAGE_RELOAD_MAX_RETRIES = 2
-# 每次重载前的随机等待区间（秒）。
-PAGE_RELOAD_DELAY_RANGE = (1.0, 2.0)
-# 每一轮目标总时长区间（秒），默认约 3 分钟。
-# 规则：从一轮开始计时，若本轮执行时长小于目标时长则补等待；超过则直接下一轮。
-CYCLE_TARGET_DURATION_RANGE = (60.0, 70.0)
-# 点击时优先使用页面中心，避免点到无效区域。
-CLICK_RATIO_X = 0.3
-CLICK_RATIO_Y = 0.4
-# 每轮打开前是否清理本地缓存，尽量避免同一窗口残留多个历史标签页。
-CLEAR_LOCAL_CACHE_BEFORE_OPEN = True
-# 每轮打开前是否清理服务器缓存，进一步避免历史标签页回灌。
-CLEAR_SERVER_CACHE_BEFORE_OPEN = True
-# Playwright 页面操作是否放到子进程执行，避免主进程因底层崩溃退出。
-PLAYWRIGHT_IN_SUBPROCESS = True
-# 子进程页面操作超时时间（秒）。
-PLAYWRIGHT_ACTION_TIMEOUT_SEC = 120
-# 发生未知异常后的兜底等待区间（秒），避免异常风暴打满 CPU。
-FATAL_BACKOFF_RANGE = (3.0, 8.0)
-# 是否忽略 Ctrl+C，忽略后程序不会退出，会继续下一轮。
-IGNORE_KEYBOARD_INTERRUPT = True
+CONFIG_PATH = Path(__file__).resolve().parent / "runtime_config.json"
+CONFIG_EXAMPLE_PATH = Path(__file__).resolve().parent / "runtime_config.example.json"
+
+
+# 读取 JSON 配置并与默认配置合并，保证每次启动都从配置文件加载。
+def load_runtime_config() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        raise FileNotFoundError(
+            f"未找到配置文件: {CONFIG_PATH}。请基于 {CONFIG_EXAMPLE_PATH} 创建 runtime_config.json"
+        )
+    try:
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"配置文件 JSON 格式错误: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("配置文件顶层必须为 JSON 对象")
+
+    merged = dict(DEFAULT_CONFIG)
+    merged.update(raw)
+    return merged
+
+
+# 将配置值标准化为两元素浮点区间，统一用于随机等待与节奏控制。
+def normalize_range(value: Any, key: str) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"配置项 {key} 必须是长度为 2 的数组")
+    start = float(value[0])
+    end = float(value[1])
+    if start < 0 or end < 0 or end < start:
+        raise ValueError(f"配置项 {key} 区间非法: {value}")
+    return start, end
+
+
+RUNTIME_CONFIG = load_runtime_config()
+TOKEN = str(RUNTIME_CONFIG.get("token", "")).strip()
+PORT = int(RUNTIME_CONFIG.get("port", 50000))
+TARGET_URLS = [str(x).strip() for x in RUNTIME_CONFIG.get("target_urls", []) if str(x).strip()]
+PROXY_RAWS = [str(x).strip() for x in RUNTIME_CONFIG.get("proxy_raws", []) if str(x).strip()]
+WINDOW_COUNT = int(RUNTIME_CONFIG.get("window_count", 5))
+WORKSPACE_NAME = RUNTIME_CONFIG.get("workspace_name")
+PROJECT_NAME = RUNTIME_CONFIG.get("project_name")
+WINDOW_WIDTH = int(RUNTIME_CONFIG.get("window_width", 600))
+WINDOW_HEIGHT = int(RUNTIME_CONFIG.get("window_height", 400))
+SCREEN_WIDTH_OVERRIDE = RUNTIME_CONFIG.get("screen_width_override")
+WINDOW_NAME_PREFIX = str(RUNTIME_CONFIG.get("window_name_prefix", "Auto-Visit-"))
+HEADLESS_MODE = bool(RUNTIME_CONFIG.get("headless_mode", True))
+USE_EXISTING_WINDOWS_ONLY = bool(RUNTIME_CONFIG.get("use_existing_windows_only", False))
+TIMEZONE_FOLLOW_IP = bool(RUNTIME_CONFIG.get("timezone_follow_ip", True))
+AUTO_CLOSE_AFTER_TASK = bool(RUNTIME_CONFIG.get("auto_close_after_task", True))
+WAIT_AFTER_OPEN_RANGE = normalize_range(RUNTIME_CONFIG.get("wait_after_open_range"), "wait_after_open_range")
+WAIT_AFTER_CLICK_RANGE = normalize_range(
+    RUNTIME_CONFIG.get("wait_after_click_range"), "wait_after_click_range"
+)
+PAGE_LOAD_TIMEOUT_MS = int(RUNTIME_CONFIG.get("page_load_timeout_ms", 45000))
+PAGE_RELOAD_MAX_RETRIES = int(RUNTIME_CONFIG.get("page_reload_max_retries", 2))
+PAGE_RELOAD_DELAY_RANGE = normalize_range(
+    RUNTIME_CONFIG.get("page_reload_delay_range"), "page_reload_delay_range"
+)
+CYCLE_TARGET_DURATION_RANGE = normalize_range(
+    RUNTIME_CONFIG.get("cycle_target_duration_range"), "cycle_target_duration_range"
+)
+CLICK_RATIO_X = float(RUNTIME_CONFIG.get("click_ratio_x", 0.3))
+CLICK_RATIO_Y = float(RUNTIME_CONFIG.get("click_ratio_y", 0.4))
+CLEAR_LOCAL_CACHE_BEFORE_OPEN = bool(RUNTIME_CONFIG.get("clear_local_cache_before_open", True))
+CLEAR_SERVER_CACHE_BEFORE_OPEN = bool(RUNTIME_CONFIG.get("clear_server_cache_before_open", True))
+PLAYWRIGHT_IN_SUBPROCESS = bool(RUNTIME_CONFIG.get("playwright_in_subprocess", True))
+PLAYWRIGHT_ACTION_TIMEOUT_SEC = int(RUNTIME_CONFIG.get("playwright_action_timeout_sec", 120))
+FATAL_BACKOFF_RANGE = normalize_range(RUNTIME_CONFIG.get("fatal_backoff_range"), "fatal_backoff_range")
+IGNORE_KEYBOARD_INTERRUPT = bool(RUNTIME_CONFIG.get("ignore_keyboard_interrupt", True))
 
 
 # 输出统一中文状态日志，便于观察任务进度。
