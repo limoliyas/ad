@@ -12,18 +12,31 @@
     en: {
       titleFallback: "Article Not Found",
       bodyFallback: "The requested article does not exist.",
-      back: "← Back to Articles",
-      navArticles: "Articles",
-      by: "By Atlas Wire Desk"
+      back: "← Back to AI Briefs",
+      navArticles: "AI Briefs",
+      by: "By AI Signal Desk Editorial",
+      videoTitle: "Editor Video Brief",
+      videoDesc: "Open video analysis in a new tab"
     },
     zh: {
       titleFallback: "未找到文章",
       bodyFallback: "你访问的文章不存在。",
-      back: "← 返回文章列表",
-      navArticles: "文章",
-      by: "作者：Atlas Wire 编辑部"
+      back: "← 返回 AI 深读",
+      navArticles: "AI 深读",
+      by: "作者：AI Signal Desk 编辑部",
+      videoTitle: "编辑部视频解读",
+      videoDesc: "在新标签页打开视频分析"
     }
   };
+
+  function escapeHtml(raw) {
+    return String(raw)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
 
   function getQueryParam(name) {
     const params = new URLSearchParams(window.location.search);
@@ -76,7 +89,6 @@
     const body = isZh ? item.bodyZh : item.bodyEn;
     const category = isZh ? (item.category === "Tech" ? "科技" : "财经") : item.category;
     const readText = isZh ? item.read.replace("min", "分钟") : item.read;
-
     document.documentElement.lang = isZh ? "zh-CN" : "en";
     document.title = title;
     detailTitle.textContent = title;
