@@ -34,7 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "headless_mode": True,
     "use_existing_windows_only": False,
     "timezone_follow_ip": True,
-    "auto_close_after_task": True,
+    "auto_close_after_task": False,
     "wait_after_open_range": [3.0, 6.0],
     "wait_after_click_range": [20.0, 40.0],
     "page_load_timeout_ms": 45000,
@@ -84,6 +84,23 @@ def normalize_range(value: Any, key: str) -> tuple[float, float]:
     return start, end
 
 
+def normalize_bool(value: Any, key: str, default: bool) -> bool:
+    """将配置项解析为布尔值，避免字符串 \"false\" 被误判为 True。"""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+    raise ValueError(f"配置项 {key} 不是合法布尔值: {value!r}")
+
+
 RUNTIME_CONFIG = load_runtime_config()
 TOKEN = str(RUNTIME_CONFIG.get("token", "")).strip()
 PORT = int(RUNTIME_CONFIG.get("port", 50000))
@@ -100,7 +117,11 @@ WINDOW_NAME_PREFIX = str(RUNTIME_CONFIG.get("window_name_prefix", "Auto-Visit-")
 HEADLESS_MODE = bool(RUNTIME_CONFIG.get("headless_mode", True))
 USE_EXISTING_WINDOWS_ONLY = bool(RUNTIME_CONFIG.get("use_existing_windows_only", False))
 TIMEZONE_FOLLOW_IP = bool(RUNTIME_CONFIG.get("timezone_follow_ip", True))
-AUTO_CLOSE_AFTER_TASK = bool(RUNTIME_CONFIG.get("auto_close_after_task", True))
+AUTO_CLOSE_AFTER_TASK = normalize_bool(
+    RUNTIME_CONFIG.get("auto_close_after_task"),
+    "auto_close_after_task",
+    default=False,
+)
 WAIT_AFTER_OPEN_RANGE = normalize_range(RUNTIME_CONFIG.get("wait_after_open_range"), "wait_after_open_range")
 WAIT_AFTER_CLICK_RANGE = normalize_range(
     RUNTIME_CONFIG.get("wait_after_click_range"), "wait_after_click_range"
@@ -689,7 +710,6 @@ def navigate_page_to_url_local(http_endpoint: str, target_url: str) -> bool:
                     page.bring_to_front()
                     page.goto(target_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
                     page.wait_for_load_state("load", timeout=PAGE_LOAD_TIMEOUT_MS)
-                    browser.close()
                     return True
                 except Exception as exc:
                     log_status("导航重试", f"第 {attempt_no}/{max_attempts} 次失败: {exc}")
@@ -698,7 +718,6 @@ def navigate_page_to_url_local(http_endpoint: str, target_url: str) -> bool:
                     delay = random.uniform(*PAGE_RELOAD_DELAY_RANGE)
                     log_status("导航重试", f"重试前等待 {delay:.2f}s")
                     time.sleep(delay)
-            browser.close()
             return False
     except Exception as exc:
         log_status("导航失败", str(exc))
@@ -738,7 +757,6 @@ def wait_page_loaded_local(http_endpoint: str, target_url: str) -> bool:
                     page.bring_to_front()
                     page.wait_for_load_state("domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
                     page.wait_for_load_state("load", timeout=PAGE_LOAD_TIMEOUT_MS)
-                    browser.close()
                     return True
                 except Exception as exc:
                     log_status("加载重试", f"第 {attempt_no}/{max_attempts} 次失败: {exc}")
@@ -752,7 +770,6 @@ def wait_page_loaded_local(http_endpoint: str, target_url: str) -> bool:
                     except Exception as reload_exc:
                         log_status("加载重试", f"重载失败: {reload_exc}")
 
-            browser.close()
             return False
     except Exception as exc:
         log_status("加载失败", str(exc))
@@ -784,8 +801,8 @@ def click_page_once_local(http_endpoint: str, target_url: str) -> bool:
             click_y = max(1, int(viewport["height"] * CLICK_RATIO_Y))
             page.mouse.click(click_x, click_y)
 
-            # 仅断开控制连接，不主动关闭真实浏览器窗口。
-            browser.close()
+            # 这里不主动调用 browser.close()，避免误关闭真实浏览器窗口。
+            # with sync_playwright() 退出时会回收控制连接。
             return True
     except Exception as exc:
         log_status("点击失败", str(exc))
@@ -840,6 +857,10 @@ def run_worker_action(action: str, http_endpoint: str, target_url: str) -> int:
 
 def run_one_cycle(client: RoxyClient) -> None:
     log_status("运行模式", "已启用窗口独立轮次模式：窗口完成后立即进入下一轮")
+    log_status(
+        "关窗策略",
+        "每轮结束将主动关窗" if AUTO_CLOSE_AFTER_TASK else "每轮结束仅刷新指纹并保留窗口",
+    )
     max_windows = max(1, len(PROXY_RAWS))
     if WINDOW_COUNT <= 0:
         raise ValueError("WINDOW_COUNT 必须大于 0")
