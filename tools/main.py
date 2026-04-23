@@ -23,6 +23,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "target_urls": [],
     "proxy_raws": [],
     "window_count": 5,
+    "urls_per_window_per_round": None,
     "workspace_name": None,
     "project_name": None,
     "window_width": 600,
@@ -88,6 +89,7 @@ PORT = int(RUNTIME_CONFIG.get("port", 50000))
 TARGET_URLS = [str(x).strip() for x in RUNTIME_CONFIG.get("target_urls", []) if str(x).strip()]
 PROXY_RAWS = [str(x).strip() for x in RUNTIME_CONFIG.get("proxy_raws", []) if str(x).strip()]
 WINDOW_COUNT = int(RUNTIME_CONFIG.get("window_count", 5))
+URLS_PER_WINDOW_PER_ROUND = RUNTIME_CONFIG.get("urls_per_window_per_round")
 WORKSPACE_NAME = RUNTIME_CONFIG.get("workspace_name")
 PROJECT_NAME = RUNTIME_CONFIG.get("project_name")
 WINDOW_WIDTH = int(RUNTIME_CONFIG.get("window_width", 600))
@@ -118,6 +120,25 @@ PLAYWRIGHT_IN_SUBPROCESS = bool(RUNTIME_CONFIG.get("playwright_in_subprocess", T
 PLAYWRIGHT_ACTION_TIMEOUT_SEC = int(RUNTIME_CONFIG.get("playwright_action_timeout_sec", 120))
 FATAL_BACKOFF_RANGE = normalize_range(RUNTIME_CONFIG.get("fatal_backoff_range"), "fatal_backoff_range")
 IGNORE_KEYBOARD_INTERRUPT = bool(RUNTIME_CONFIG.get("ignore_keyboard_interrupt", True))
+
+
+# 计算每个窗口每轮应处理的 URL 数量：
+# - 配置 urls_per_window_per_round 时，固定使用该值（不超过 URL 总数）
+# - 未配置时，保持历史策略（URL>=4 随机 3/4 个，否则全量）
+def resolve_selected_url_count(url_total: int) -> int:
+    if url_total <= 0:
+        raise ValueError("url_total 必须大于 0")
+
+    configured = URLS_PER_WINDOW_PER_ROUND
+    if configured is not None:
+        configured_int = int(configured)
+        if configured_int <= 0:
+            raise ValueError("urls_per_window_per_round 必须大于 0")
+        return min(configured_int, url_total)
+
+    if url_total >= 4:
+        return random.randint(3, 4)
+    return url_total
 
 
 # 输出统一中文状态日志，便于观察任务进度。
@@ -343,8 +364,8 @@ def extract_dir_id(resp: dict) -> str:
 
 
 # 生成每个窗口要执行的任务列表：
-# - URL 数量 >= 4：每个窗口随机处理 3 或 4 个 URL
-# - URL 数量 < 4：每个窗口处理全部 URL
+# - 配置 urls_per_window_per_round 时：每个窗口每轮固定处理该数量
+# - 未配置时：沿用历史策略（URL>=4 随机 3/4 个，否则全量）
 def build_window_visit_tasks(
     target_urls: list[str], proxy_raws: list[str], window_count: int
 ) -> list[list[dict[str, Any]]]:
@@ -360,11 +381,7 @@ def build_window_visit_tasks(
     all_url_indices = list(range(url_total))
 
     for slot_index in range(window_count):
-        if url_total >= 4:
-            selected_count = 1
-            # selected_count = random.randint(3, 4)
-        else:
-            selected_count = url_total
+        selected_count = resolve_selected_url_count(url_total)
         selected_indices = random.sample(all_url_indices, k=selected_count)
         random.shuffle(selected_indices)
 
@@ -400,10 +417,7 @@ def build_slot_visit_tasks(
 
     url_total = len(target_urls)
     all_url_indices = list(range(url_total))
-    if url_total >= 4:
-        selected_count = random.randint(3, 4)
-    else:
-        selected_count = url_total
+    selected_count = resolve_selected_url_count(url_total)
     selected_indices = random.sample(all_url_indices, k=selected_count)
     random.shuffle(selected_indices)
 

@@ -9,11 +9,14 @@
   "__comment_port": "Roxy 本地端口。通常保持默认 50000。",
   "port": 50000,
 
-  "__comment_target_urls": "目标 URL 列表。当前逻辑：URL 数量>=4 时，每个窗口随机处理 3 或 4 个；<4 时每个窗口全处理。",
+  "__comment_target_urls": "目标 URL 列表。",
   "target_urls": [
     "https://example.com/page-1",
     "https://example.com/page-2"
   ],
+
+  "__comment_urls_per_window_per_round": "可选。每个窗口每轮处理的 URL 数量。设为 1=每窗每轮仅跑 1 个 URL；设为 null 则沿用历史策略（URL>=4 随机 3/4 个，否则全量）。",
+  "urls_per_window_per_round": null,
 
   "__comment_proxy_raws": "代理列表，格式固定：host:port:username:password。每个窗口会绑定到一个代理槽位。",
   "proxy_raws": [
