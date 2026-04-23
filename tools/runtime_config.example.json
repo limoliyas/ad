@@ -52,8 +52,8 @@
   "__comment_timezone_follow_ip": "指纹时区是否跟随 IP（fingerInfo.isTimeZone）。",
   "timezone_follow_ip": true,
 
-  "__comment_auto_close_after_task": "每个任务结束后是否立即关窗。建议 true，避免标签页累积。",
-  "auto_close_after_task": true,
+  "__comment_auto_close_after_task": "每轮结束后是否主动关窗。建议 false，仅刷新指纹并保留窗口；如需强制关窗再改为 true。",
+  "auto_close_after_task": false,
 
   "__comment_wait_after_open_range": "页面加载成功后，点击前的随机等待区间 [最小值, 最大值]。",
   "wait_after_open_range": [3.0, 6.0],
