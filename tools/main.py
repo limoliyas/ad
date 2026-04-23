@@ -544,6 +544,40 @@ def normalize_http_endpoint(http_value: Any) -> str | None:
     return f"http://{http_value}"
 
 
+# 从接口 data 中尽量提取可用的 http 调试地址。
+def extract_http_endpoint_from_data(data: Any) -> str | None:
+    if isinstance(data, str):
+        return normalize_http_endpoint(data)
+
+    if isinstance(data, dict):
+        preferred_keys = [
+            "http",
+            "debugHttp",
+            "debug_http",
+            "httpUrl",
+            "http_url",
+            "debugAddress",
+            "debug_address",
+        ]
+        for key in preferred_keys:
+            endpoint = normalize_http_endpoint(data.get(key))
+            if endpoint:
+                return endpoint
+
+        for value in data.values():
+            endpoint = extract_http_endpoint_from_data(value)
+            if endpoint:
+                return endpoint
+
+    if isinstance(data, list):
+        for item in data:
+            endpoint = extract_http_endpoint_from_data(item)
+            if endpoint:
+                return endpoint
+
+    return None
+
+
 # 在子进程执行页面动作，避免主进程受 Playwright 崩溃影响。
 def run_playwright_action_in_subprocess(action: str, http_endpoint: str, target_url: str) -> bool:
     cmd = [
@@ -857,6 +891,7 @@ def run_one_cycle(client: RoxyClient) -> None:
                 try:
                     proxy_info = build_proxy_info(task["proxy_raw"])
                     progress_board.update(slot_index, task_order + 1, "准备中")
+                    just_opened_now = False
 
                     if not opened_this_round:
                         if dir_id:
@@ -943,19 +978,47 @@ def run_one_cycle(client: RoxyClient) -> None:
                         }
                         open_resp = client.browser_open(open_payload)
                         progress_board.update(slot_index, task_order + 1, "窗口已打开")
-                        open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else {}
-                        last_http_endpoint = normalize_http_endpoint(
-                            open_data.get("http") if isinstance(open_data, dict) else None
-                        )
+                        open_data = open_resp.get("data", {}) if isinstance(open_resp, dict) else None
+                        last_http_endpoint = extract_http_endpoint_from_data(open_data)
+                        if not last_http_endpoint:
+                            try:
+                                conn_resp = client.browser_connection_info(
+                                    {
+                                        "workspaceId": workspace_id,
+                                        "dirId": dir_id,
+                                    }
+                                )
+                                conn_data = conn_resp.get("data", {}) if isinstance(conn_resp, dict) else None
+                                last_http_endpoint = extract_http_endpoint_from_data(conn_data)
+                            except Exception as conn_exc:
+                                log_status("调试地址", f"{window_name} connection_info 获取失败: {conn_exc}")
+                        if last_http_endpoint:
+                            progress_board.update(slot_index, task_order + 1, "调试地址就绪")
+                        else:
+                            progress_board.update(slot_index, task_order + 1, "调试地址缺失")
                         opened_this_round = True
+                        just_opened_now = True
 
                     loaded = False
                     if last_http_endpoint:
-                        progress_board.update(slot_index, task_order + 1, "同窗导航并等待加载")
-                        loaded = navigate_page_to_url(
-                            http_endpoint=last_http_endpoint,
-                            target_url=task["url"],
-                        )
+                        if just_opened_now:
+                            progress_board.update(slot_index, task_order + 1, "等待首个页面加载")
+                            loaded = wait_page_loaded(
+                                http_endpoint=last_http_endpoint,
+                                target_url=task["url"],
+                            )
+                            if not loaded:
+                                progress_board.update(slot_index, task_order + 1, "首个加载失败，尝试同窗导航")
+                                loaded = navigate_page_to_url(
+                                    http_endpoint=last_http_endpoint,
+                                    target_url=task["url"],
+                                )
+                        else:
+                            progress_board.update(slot_index, task_order + 1, "同窗导航并等待加载")
+                            loaded = navigate_page_to_url(
+                                http_endpoint=last_http_endpoint,
+                                target_url=task["url"],
+                            )
                     else:
                         progress_board.update(slot_index, task_order + 1, "缺少调试地址，加载失败")
 
@@ -993,11 +1056,39 @@ def run_one_cycle(client: RoxyClient) -> None:
                 else:
                     progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，无可关闭窗口")
             else:
-                progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，窗口保留")
+                final_dir_id = slot.get("dir_id")
+                if isinstance(final_dir_id, str) and final_dir_id:
+                    try:
+                        client.browser_random_env(
+                            {
+                                "workspaceId": workspace_id,
+                                "dirId": final_dir_id,
+                            }
+                        )
+                        progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，已刷新指纹")
+                    except Exception as exc:
+                        progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，刷新指纹失败")
+                        log_status("刷新指纹失败", f"{window_name} 本轮结束刷新指纹失败: {exc}")
+                else:
+                    progress_board.update(slot_index, len(tasks_for_slot), "本轮完成，窗口保留")
 
             # 窗口独立轮次：本窗口完成即进入下一轮，不等待其他窗口。
             round_elapsed = time.monotonic() - round_start_at
-            log_status("窗口轮次", f"{window_name} 第 {window_round} 轮完成，用时 {round_elapsed:.2f}s")
+            target_round_duration = random.uniform(*CYCLE_TARGET_DURATION_RANGE)
+            if round_elapsed < target_round_duration:
+                wait_duration = target_round_duration - round_elapsed
+                progress_board.update(
+                    slot_index,
+                    len(tasks_for_slot),
+                    f"本轮完成，节奏等待 {wait_duration:.1f}s",
+                )
+                time.sleep(wait_duration)
+                round_elapsed = time.monotonic() - round_start_at
+
+            log_status(
+                "窗口轮次",
+                f"{window_name} 第 {window_round} 轮完成，用时 {round_elapsed:.2f}s，目标 {target_round_duration:.2f}s",
+            )
 
     workers: list[threading.Thread] = []
     for slot_index in range(effective_window_count):
