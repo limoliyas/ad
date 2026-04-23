@@ -10,6 +10,7 @@ import time
 import unicodedata
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     from tools.roxy_client import RoxyClient, RoxyAPIError, RoxyClientError
@@ -578,6 +579,53 @@ def extract_http_endpoint_from_data(data: Any) -> str | None:
     return None
 
 
+# 计算页面 URL 与目标 URL 的匹配分值，分值越高代表越可能是目标标签页。
+def calculate_url_match_score(page_url: str, target_url: str) -> int:
+    page = (page_url or "").strip()
+    target = (target_url or "").strip()
+    if not page or not target:
+        return 0
+    if page == target:
+        return 4
+    if target in page or page in target:
+        return 3
+    try:
+        parsed_page = urlparse(page)
+        parsed_target = urlparse(target)
+    except Exception:
+        return 0
+
+    if parsed_page.netloc and parsed_page.netloc == parsed_target.netloc:
+        if parsed_page.path and parsed_page.path == parsed_target.path:
+            return 2
+        return 1
+    return 0
+
+
+# 在当前上下文中选择最可能的目标标签页；同分时优先最新打开的标签页。
+def select_best_page(context: Any, target_url: str, require_match: bool = False) -> Any | None:
+    pages = list(getattr(context, "pages", []) or [])
+    if not pages:
+        return None
+
+    best_page = None
+    best_score = -1
+    best_idx = -1
+    for idx, page in enumerate(pages):
+        score = calculate_url_match_score(getattr(page, "url", ""), target_url)
+        # 同分时优先索引更大的标签页（通常是后打开的页）。
+        if score > best_score or (score == best_score and idx > best_idx):
+            best_score = score
+            best_page = page
+            best_idx = idx
+
+    if require_match and best_score <= 0:
+        return None
+    if best_page is not None:
+        return best_page
+    return pages[-1]
+
+
 # 在子进程执行页面动作，避免主进程受 Playwright 崩溃影响。
 def run_playwright_action_in_subprocess(action: str, http_endpoint: str, target_url: str) -> bool:
     cmd = [
@@ -630,7 +678,9 @@ def navigate_page_to_url_local(http_endpoint: str, target_url: str) -> bool:
         with sync_playwright() as pw:
             browser = pw.chromium.connect_over_cdp(http_endpoint)
             context = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = context.pages[0] if context.pages else context.new_page()
+            page = select_best_page(context, target_url, require_match=False)
+            if page is None:
+                page = context.new_page()
 
             max_attempts = PAGE_RELOAD_MAX_RETRIES + 1
             for attempt in range(max_attempts):
@@ -670,16 +720,13 @@ def wait_page_loaded_local(http_endpoint: str, target_url: str) -> bool:
 
             page = None
             for _ in range(30):
-                for p in context.pages:
-                    if target_url in (p.url or ""):
-                        page = p
-                        break
+                page = select_best_page(context, target_url, require_match=True)
                 if page:
                     break
                 time.sleep(0.5)
 
-            if page is None and context.pages:
-                page = context.pages[0]
+            if page is None:
+                page = select_best_page(context, target_url, require_match=False)
             if page is None:
                 page = context.new_page()
                 page.goto(target_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT_MS)
@@ -726,13 +773,7 @@ def click_page_once_local(http_endpoint: str, target_url: str) -> bool:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
 
             # 优先定位目标 URL 页面，找不到则用当前页或新开页。
-            page = None
-            for p in context.pages:
-                if target_url in (p.url or ""):
-                    page = p
-                    break
-            if page is None and context.pages:
-                page = context.pages[0]
+            page = select_best_page(context, target_url, require_match=False)
             if page is None:
                 page = context.new_page()
                 page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
