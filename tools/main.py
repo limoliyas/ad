@@ -361,7 +361,8 @@ def build_window_visit_tasks(
 
     for slot_index in range(window_count):
         if url_total >= 4:
-            selected_count = random.randint(3, 4)
+            selected_count = 1
+            # selected_count = random.randint(3, 4)
         else:
             selected_count = url_total
         selected_indices = random.sample(all_url_indices, k=selected_count)
